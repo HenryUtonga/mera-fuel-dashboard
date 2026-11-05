@@ -1,2227 +1,1974 @@
 import 'dart:math' as math;
-
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-
 import '../services/dashboard_service.dart';
 
 class AnalyticsPage extends StatefulWidget {
   const AnalyticsPage({super.key});
-
   @override
   State<AnalyticsPage> createState() => _AnalyticsPageState();
 }
 
 class _AnalyticsPageState extends State<AnalyticsPage> {
-  final DashboardService _service = DashboardService();
-
+  final _service = DashboardService();
+  String _period = '7 Days';
+  String _selectedReportingOmc = 'All OMCs';
   bool _loading = true;
   String? _error;
-
-  String _selectedPeriod = '7 Days';
-
-  List<Map<String, dynamic>> _fuelings = [];
-  List<Map<String, dynamic>> _stations = [];
-  List<Map<String, dynamic>> _consumption = [];
-  List<Map<String, dynamic>> _rejections = [];
-  List<Map<String, dynamic>> _regionalReceipts = [];
-  List<Map<String, dynamic>> _expectedDeliveries = [];
-
-  static const List<String> _periods = [
-    'Today',
-    '7 Days',
-    '30 Days',
-    '90 Days',
-  ];
+List<Map<String, dynamic>> _fuelings = [], _stations = [], _rates = [],
+    _rejections = [], _intervals = [], _deliveries = [],
+    _stationReporting = [], _omcReporting = [];
+  static const _petrol = Color(0xFF18A94B);
+  static const _diesel = Color(0xFFF4B41A);
 
   @override
-  void initState() {
-    super.initState();
-    _loadAnalytics();
-  }
+  void initState() { super.initState(); _load(); }
 
   DateTime get _today {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
+    // Use Malawi (UTC+2) regardless of browser timezone.
+    final now = DateTime.now().toUtc().add(const Duration(hours: 2));
+    return DateTime.utc(now.year, now.month, now.day);
   }
-
-  DateTime get _startDate {
-    switch (_selectedPeriod) {
-      case 'Today':
-        return _today;
-      case '30 Days':
-        return _today.subtract(const Duration(days: 29));
-      case '90 Days':
-        return _today.subtract(const Duration(days: 89));
-      case '7 Days':
-      default:
-        return _today.subtract(const Duration(days: 6));
+  DateTime get _start => _today.subtract(Duration(days: switch (_period) {
+    'Today' => 0, '30 Days' => 29, '90 Days' => 89, _ => 6,
+  }));
+  DateTime get _end => _today;
+  String _day(DateTime d) => '${d.day}/${d.month}';
+  String _date(DateTime d) => '${d.day}/${d.month}/${d.year}';
+  String _text(dynamic v) => v?.toString().trim() ?? '';
+  double _num(dynamic v) => v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
+  int _int(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
+  bool _bool(dynamic v) => v == true || '$v'.toLowerCase() == 'true';
+  String _fmt(num v) {
+    final parts = v.round().toString().split('');
+    final b = StringBuffer();
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0 && (parts.length - i) % 3 == 0) b.write(',');
+      b.write(parts[i]);
     }
+    return b.toString();
+  }
+  DateTime? _malawi(dynamic value) {
+    final parsed = DateTime.tryParse('$value');
+    if (parsed == null) return null;
+    return parsed.toUtc().add(const Duration(hours: 2));
+  }
+  DateTime? _dateOnly(dynamic value) {
+    final s = _text(value);
+    if (s.length < 10) return null;
+    return DateTime.tryParse(s.substring(0, 10));
+  }
+  bool _within(DateTime d) {
+    final key = DateTime.utc(d.year, d.month, d.day);
+    return !key.isBefore(_start) && !key.isAfter(_end);
   }
 
-  DateTime get _endDate => _today;
-
-  Future<void> _loadAnalytics() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
     try {
-      final results = await Future.wait([
-        _service.getFuelingAnalytics(startDate: _startDate, endDate: _endDate),
+      final data = await Future.wait([
+        _service.getFuelingAnalytics(startDate: _start, endDate: _end),
         _service.getStationIntelligence(),
         _service.getStationConsumption(),
         _service.getStationRejections(),
-        _service.getRegionalFuelReceipts(),
+        _service.getFuelConsumptionIntervals(),
+        _service.getFuelDeliveryVariance(),
+        _service.getStationReportingFreshness(),
+        _service.getOmcReportingFreshness(),
+        
       ]);
-
-      final expected = <Map<String, dynamic>>[];
-
-      // Expected deliveries are currently exposed by calendar day.
-      // Load each day in the selected analytics period.
-      var day = _startDate;
-      while (!day.isAfter(_endDate)) {
-        final rows = await _service.getExpectedDeliveries(date: day);
-        expected.addAll(rows);
-        day = day.add(const Duration(days: 1));
-      }
-
       if (!mounted) return;
-
-      setState(() {
-        _fuelings = results[0];
-        _stations = results[1];
-        _consumption = results[2];
-        _rejections = results[3];
-        _regionalReceipts = results[4];
-        _expectedDeliveries = expected;
-        _loading = false;
-      });
-    } catch (error) {
+setState(() {
+  _fuelings = data[0];
+  _stations = data[1];
+  _rates = data[2];
+  _rejections = data[3];
+  _intervals = data[4];
+  _deliveries = data[5];
+  _stationReporting = data[6];
+  _omcReporting = data[7];
+  _loading = false;
+});
+} catch (e) {
       if (!mounted) return;
-
-      setState(() {
-        _error = error.toString();
-        _loading = false;
-      });
+      setState(() { _error = '$e'; _loading = false; });
     }
   }
 
-  Future<void> _changePeriod(String period) async {
-    if (_selectedPeriod == period) return;
-
-    setState(() {
-      _selectedPeriod = period;
-    });
-
-    await _loadAnalytics();
-  }
-
-  String _text(dynamic value) {
-    return value?.toString().trim() ?? '';
-  }
-
-  double _number(dynamic value) {
-    if (value == null) return 0;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString()) ?? 0;
-  }
-
-  int _integer(dynamic value) {
-    if (value == null) return 0;
-    if (value is num) return value.toInt();
-    return int.tryParse(value.toString()) ?? 0;
-  }
-
-  bool _boolean(dynamic value) {
-    if (value is bool) return value;
-    return value?.toString().toLowerCase() == 'true';
-  }
-
-  String _formatNumber(num value) {
-    final rounded = value.round().toString();
-    final buffer = StringBuffer();
-
-    for (var i = 0; i < rounded.length; i++) {
-      final remaining = rounded.length - i;
-      buffer.write(rounded[i]);
-
-      if (remaining > 1 && remaining % 3 == 1) {
-        buffer.write(',');
-      }
-    }
-
-    return buffer.toString();
-  }
-
-  String _formatLitres(double value) {
-    return '${_formatNumber(value)} L';
-  }
-
-  String _formatDate(DateTime date) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
-  }
-
-  DateTime? _malawiDate(dynamic value) {
-    if (value == null) return null;
-
-    final parsed = DateTime.tryParse(value.toString());
-    if (parsed == null) return null;
-
-    final malawi = parsed.toUtc().add(const Duration(hours: 2));
-
-    return DateTime(
-      malawi.year,
-      malawi.month,
-      malawi.day,
-      malawi.hour,
-      malawi.minute,
-      malawi.second,
-    );
-  }
-
-  String _stationId(Map<String, dynamic> row) {
-    return _text(row['filling_station_id']);
-  }
-
-  String _stationName(Map<String, dynamic> row) {
-    final name = _text(row['filling_station_name']);
-    return name.isEmpty ? 'Unknown Station' : name;
-  }
-
-  String _vehicleKey(Map<String, dynamic> row) {
-    final vehicleId = _text(row['vehicle_id']);
-    if (vehicleId.isNotEmpty) return 'ID:$vehicleId';
-
-    final vehicleCode = _text(row['vehicle_code']);
-    if (vehicleCode.isNotEmpty) return 'CODE:$vehicleCode';
-
-    final plate = _text(row['plate_number']);
-    if (plate.isNotEmpty) return 'PLATE:$plate';
-
-    return '';
-  }
-
-  int get _totalFuelings => _fuelings.length;
-
-  int get _uniqueVehicles {
-    final values = <String>{};
-
-    for (final row in _fuelings) {
-      final key = _vehicleKey(row);
-      if (key.isNotEmpty) values.add(key);
-    }
-
-    return values.length;
-  }
-
-  int get _activeStations {
-    return _fuelings
-        .map(_stationId)
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .length;
-  }
-
-  int get _syncConflicts {
-    return _fuelings.where((row) => _boolean(row['sync_conflict'])).length;
-  }
-
-  int get _overrides {
-    return _fuelings.where((row) => _boolean(row['override_used'])).length;
-  }
-
-  int get _totalRejections {
-    return _rejections.fold(
-      0,
-      (sum, row) => sum + _integer(row['rejection_count']),
-    );
-  }
-
-  double get _expectedLitres {
-    return _expectedDeliveries.fold(
-      0,
-      (sum, row) => sum + _number(row['quantity_litres']),
-    );
-  }
-
-  double get _currentPetrolStock {
-    return _stations.fold(
-      0,
-      (sum, row) => sum + _number(row['current_petrol_litres']),
-    );
-  }
-
-  double get _currentDieselStock {
-    return _stations.fold(
-      0,
-      (sum, row) => sum + _number(row['current_diesel_litres']),
-    );
-  }
-
-  Map<String, Map<String, dynamic>> get _consumptionByStationProduct {
-    final result = <String, Map<String, dynamic>>{};
-
-    for (final row in _consumption) {
-      final stationId = _text(row['filling_station_id']);
-      final product = _text(row['product']).toUpperCase();
-
-      if (stationId.isEmpty || product.isEmpty) continue;
-
-      result['$stationId|$product'] = row;
-    }
-
-    return result;
-  }
-
-  double _dailyConsumptionForProduct(String product) {
-    var total = 0.0;
-
-    for (final row in _consumption) {
-      if (_text(row['product']).toUpperCase() != product) continue;
-
-      if (_text(row['consumption_data_status']).toUpperCase() != 'SUFFICIENT') {
-        continue;
-      }
-
-      total += _number(row['estimated_daily_consumption_litres']);
-    }
-
-    return total;
-  }
-
-  double get _petrolDailyConsumption {
-    return _dailyConsumptionForProduct('PETROL');
-  }
-
-  double get _dieselDailyConsumption {
-    return _dailyConsumptionForProduct('DIESEL');
-  }
-
-  double? _daysRemaining(double stock, double dailyConsumption) {
-    if (dailyConsumption <= 0) return null;
-    return stock / dailyConsumption;
-  }
-
-Map<DateTime, Map<String, int>> get _fuelingsByDay {
-  final result = <DateTime, Map<String, int>>{};
-
-  var day = _startDate;
-  while (!day.isAfter(_endDate)) {
-    result[day] = {
-      'PETROL': 0,
-      'DIESEL': 0,
-    };
-    day = day.add(const Duration(days: 1));
-  }
-
-  for (final row in _fuelings) {
-    final date = _malawiDate(row['fueled_at']);
-    if (date == null) continue;
-
-    final key = DateTime(date.year, date.month, date.day);
-
-    if (!result.containsKey(key)) continue;
-
-    final product = _text(row['fuel_type']).toUpperCase();
-
-    if (product == 'PETROL' || product == 'DIESEL') {
-      result[key]![product] = (result[key]![product] ?? 0) + 1;
-    }
-  }
-
-  return result;
-}
-
-Map<int, Map<String, int>> get _fuelingsByHour {
-  final result = <int, Map<String, int>>{
-    for (var hour = 0; hour < 24; hour++)
-      hour: {
-        'PETROL': 0,
-        'DIESEL': 0,
-      },
+  Map<String, Map<String, dynamic>> get _stationIndex => {
+    for (final row in _stations) _text(row['filling_station_id']): row,
   };
 
-  for (final row in _fuelings) {
-    final date = _malawiDate(row['fueled_at']);
-    if (date == null) continue;
+  // An interval is an observed quantity between two physical stock counts.
+  // It cannot be assigned to an exact hour or day without an estimation model.
+  List<Map<String, dynamic>> get _observations => _intervals.where((r) {
+    final end = _malawi(r['current_count_at']);
+    return end != null && _within(end);
+  }).toList();
 
-    final product = _text(row['fuel_type']).toUpperCase();
-
-    if (product == 'PETROL' || product == 'DIESEL') {
-      result[date.hour]![product] =
-          (result[date.hour]![product] ?? 0) + 1;
+  // Daily chart explicitly reports the date a reading CLOSED, not the date
+  // fuel was necessarily consumed. Never fabricate hourly consumption.
+  Map<DateTime, Map<String, double>> get _observedByClosingDay {
+    final out = <DateTime, Map<String, double>>{};
+    for (var d = _start; !d.isAfter(_end); d = d.add(const Duration(days: 1))) {
+      out[d] = {'PETROL': 0, 'DIESEL': 0};
     }
+    for (final r in _observations) {
+      final product = _text(r['product']).toUpperCase();
+      if (product != 'PETROL' && product != 'DIESEL') continue;
+      final end = _malawi(r['current_count_at'])!;
+      final key = DateTime.utc(end.year, end.month, end.day);
+      out[key]![product] = (out[key]![product] ?? 0) + _num(r['consumption_litres']);
+    }
+    return out;
   }
 
-  return result;
-}
+  double _observed(String product) => _observations
+      .where((r) => _text(r['product']).toUpperCase() == product)
+      .fold(0.0, (sum, r) => sum + _num(r['consumption_litres']));
 
-List<MapEntry<String, Map<String, int>>> get _fuelingsByStation {
-  final result = <String, Map<String, int>>{};
+  int _reporting(String product) => _observations
+      .where((r) => _text(r['product']).toUpperCase() == product)
+      .map((r) => _text(r['filling_station_id'])).where((id) => id.isNotEmpty)
+      .toSet().length;
 
-  for (final row in _fuelings) {
-    final station = _stationName(row);
-    final product = _text(row['fuel_type']).toUpperCase();
+  double _stock(String product) => _stations.fold(0.0, (sum, r) => sum +
+      _num(r[product == 'PETROL' ? 'current_petrol_litres' : 'current_diesel_litres']));
 
-    if (product != 'PETROL' && product != 'DIESEL') continue;
+  double _dailyRate(String product) => _rates.where((r) =>
+      _text(r['product']).toUpperCase() == product &&
+      _text(r['consumption_data_status']).toUpperCase() == 'SUFFICIENT')
+      .fold(0.0, (sum, r) => sum + _num(r['estimated_daily_consumption_litres']));
 
-    result.putIfAbsent(
-      station,
-      () => {
-        'PETROL': 0,
-        'DIESEL': 0,
-      },
-    );
-
-    result[station]![product] =
-        (result[station]![product] ?? 0) + 1;
+  List<MapEntry<String, Map<String, double>>> _rank(String field) {
+    final totals = <String, Map<String, double>>{};
+    final stations = _stationIndex;
+    for (final r in _observations) {
+      final product = _text(r['product']).toUpperCase();
+      if (product != 'PETROL' && product != 'DIESEL') continue;
+      final station = stations[_text(r['filling_station_id'])];
+      final name = field == 'filling_station_name'
+          ? _text(station?['filling_station_name'])
+          : _text(station?[field]);
+      final label = name.isEmpty ? 'Unknown' : name;
+      final entry = totals.putIfAbsent(label, () => {'PETROL': 0, 'DIESEL': 0});
+      entry[product] = (entry[product] ?? 0) + _num(r['consumption_litres']);
+    }
+    final sorted = totals.entries.toList()..sort((a, b) =>
+        ((b.value['PETROL'] ?? 0) + (b.value['DIESEL'] ?? 0))
+        .compareTo((a.value['PETROL'] ?? 0) + (a.value['DIESEL'] ?? 0)));
+    return sorted;
   }
 
-  final entries = result.entries.toList()
-    ..sort((a, b) {
-      final aTotal =
-          (a.value['PETROL'] ?? 0) + (a.value['DIESEL'] ?? 0);
-      final bTotal =
-          (b.value['PETROL'] ?? 0) + (b.value['DIESEL'] ?? 0);
+  List<Map<String, dynamic>> get _periodDeliveries => _deliveries.where((r) {
+    final d = _dateOnly(r['delivery_date']);
+    return d != null && _within(d);
+  }).toList();
 
-      return bTotal.compareTo(aTotal);
-    });
+  double _deliveryTotal(String product, String field) => _periodDeliveries
+      .where((r) => _text(r['product']).toUpperCase() == product)
+      .fold(0.0, (sum, r) => sum + _num(r[field]));
 
-  return entries;
-}
+  List<Map<String, dynamic>> get _exceptions => _periodDeliveries.where((r) =>
+      _text(r['comparison_status']) != 'MATCHED').toList()
+      ..sort((a, b) => _num(b['variance_litres']).abs()
+          .compareTo(_num(a['variance_litres']).abs()));
 
-List<MapEntry<String, Map<String, int>>> get _fuelingsByOmc {
-  final result = <String, Map<String, int>>{};
+  Widget _panel(String title, String subtitle, Widget child) => Container(
+    width: double.infinity, padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: Colors.black12)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 5),
+      Text(subtitle, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+      const SizedBox(height: 18), child,
+    ]),
+  );
 
-  for (final row in _fuelings) {
-    var omc = _text(row['omc']);
-    if (omc.isEmpty) omc = 'Unknown';
+  Widget _stat(String label, String value, String note) => Container(
+    width: 195, padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(color: Colors.white,
+      borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.black12)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 5), Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 4), Text(note, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+    ]),
+  );
 
-    final product = _text(row['fuel_type']).toUpperCase();
+  Widget _legend() => const Wrap(spacing: 18, children: [
+    Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.circle, color: _petrol, size: 11), SizedBox(width: 6), Text('Petrol')]),
+    Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.circle, color: _diesel, size: 11), SizedBox(width: 6), Text('Diesel')]),
+  ]);
 
-    if (product != 'PETROL' && product != 'DIESEL') continue;
-
-    result.putIfAbsent(
-      omc,
-      () => {
-        'PETROL': 0,
-        'DIESEL': 0,
-      },
-    );
-
-    result[omc]![product] =
-        (result[omc]![product] ?? 0) + 1;
+  Widget _trend() {
+    final entries = _observedByClosingDay.entries.toList();
+    if (_observations.isEmpty) return const SizedBox(height: 150, child: Center(child: Text('No completed stock-count intervals in this period.')));
+    final petrol = <FlSpot>[], diesel = <FlSpot>[];
+    var maxY = 0.0;
+    for (var i = 0; i < entries.length; i++) {
+      final p = entries[i].value['PETROL'] ?? 0;
+      final d = entries[i].value['DIESEL'] ?? 0;
+      maxY = math.max(maxY, math.max(p, d));
+      petrol.add(FlSpot(i.toDouble(), p)); diesel.add(FlSpot(i.toDouble(), d));
+    }
+    return Column(children: [
+      _legend(), const SizedBox(height: 14),
+      SizedBox(height: 290, child: LineChart(LineChartData(
+        minY: 0, maxY: math.max(1.0, maxY * 1.15),
+        gridData: const FlGridData(drawVerticalLine: false),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 55)),
+          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 28,
+            interval: entries.length > 30 ? 10 : entries.length > 10 ? 5 : 1,
+            getTitlesWidget: (v, _) {
+              final i = v.toInt();
+              if (i < 0 || i >= entries.length || v != i.toDouble()) return const SizedBox.shrink();
+              return Text(_day(entries[i].key), style: const TextStyle(fontSize: 10));
+            },
+          )),
+        ),
+        lineBarsData: [
+          LineChartBarData(spots: petrol, color: _petrol, barWidth: 3, isCurved: false,
+            dotData: FlDotData(show: entries.length <= 14)),
+          LineChartBarData(spots: diesel, color: _diesel, barWidth: 3, isCurved: false,
+            dotData: FlDotData(show: entries.length <= 14)),
+        ],
+        lineTouchData: LineTouchData(touchTooltipData: LineTouchTooltipData(
+          getTooltipItems: (spots) => spots.map((s) => LineTooltipItem(
+            '${s.barIndex == 0 ? 'Petrol' : 'Diesel'}: ${_fmt(s.y)} L\nReading closed ${_day(entries[s.x.toInt()].key)}',
+            const TextStyle(color: Colors.white),
+          )).toList(),
+        )),
+      ))),
+    ]);
   }
 
-  final entries = result.entries.toList()
-    ..sort((a, b) {
-      final aTotal =
-          (a.value['PETROL'] ?? 0) + (a.value['DIESEL'] ?? 0);
-      final bTotal =
-          (b.value['PETROL'] ?? 0) + (b.value['DIESEL'] ?? 0);
-
-      return bTotal.compareTo(aTotal);
-    });
-
-  return entries;
-}
-
-List<MapEntry<String, Map<String, int>>> get _fuelingsByRegion {
-  final result = <String, Map<String, int>>{};
-
-  for (final row in _fuelings) {
-    var region = _text(row['region']);
-    if (region.isEmpty) region = 'Unknown';
-
-    final product = _text(row['fuel_type']).toUpperCase();
-
-    if (product != 'PETROL' && product != 'DIESEL') continue;
-
-    result.putIfAbsent(
-      region,
-      () => {
-        'PETROL': 0,
-        'DIESEL': 0,
-      },
-    );
-
-    result[region]![product] =
-        (result[region]![product] ?? 0) + 1;
+  Widget _ranking(List<MapEntry<String, Map<String, double>>> rows) {
+    if (rows.isEmpty) return const Padding(padding: EdgeInsets.all(30), child: Text('No observed consumption in the selected period.'));
+    final maxTotal = rows.map((e) => (e.value['PETROL'] ?? 0) + (e.value['DIESEL'] ?? 0))
+        .fold<double>(1.0, (current, value) => math.max(current, value));
+    return Column(children: [
+      _legend(), const SizedBox(height: 14),
+      ...rows.take(10).map((e) {
+        final p = e.value['PETROL'] ?? 0, d = e.value['DIESEL'] ?? 0;
+        return Padding(padding: const EdgeInsets.only(bottom: 14), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [Expanded(child: Text(e.key, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600))),
+              Text('${_fmt(p + d)} L', style: const TextStyle(fontWeight: FontWeight.w700))]),
+            const SizedBox(height: 5),
+            LinearProgressIndicator(value: p / maxTotal, color: _petrol, minHeight: 6,
+              backgroundColor: Colors.black12),
+            const SizedBox(height: 3),
+            LinearProgressIndicator(value: d / maxTotal, color: _diesel, minHeight: 6,
+              backgroundColor: Colors.black12),
+            Text('Petrol ${_fmt(p)} L  •  Diesel ${_fmt(d)} L',
+              style: const TextStyle(fontSize: 11, color: Colors.black54)),
+          ],
+        ));
+      }),
+    ]);
   }
 
-  final entries = result.entries.toList()
-    ..sort((a, b) {
-      final aTotal =
-          (a.value['PETROL'] ?? 0) + (a.value['DIESEL'] ?? 0);
-      final bTotal =
-          (b.value['PETROL'] ?? 0) + (b.value['DIESEL'] ?? 0);
+Widget _supply() {
+  Widget fuelStockCard(String product) {
+    final stock = _stock(product);
+    final daily = _dailyRate(product);
+    final days = daily > 0 ? stock / daily : null;
 
-      return bTotal.compareTo(aTotal);
-    });
+    final Color statusColor;
+    final String status;
 
-  return entries;
-}
-
-  Map<String, double> get _expectedByProduct {
-    final result = <String, double>{'PETROL': 0, 'DIESEL': 0, 'PARAFFIN': 0};
-
-    for (final row in _expectedDeliveries) {
-      final product = _text(row['product']).toUpperCase();
-      result[product] =
-          (result[product] ?? 0) + _number(row['quantity_litres']);
+    if (days == null) {
+      statusColor = Colors.grey;
+      status = 'INSUFFICIENT DATA';
+    } else if (days < 1) {
+      statusColor = Colors.red;
+      status = 'CRITICAL';
+    } else if (days < 2) {
+      statusColor = Colors.orange;
+      status = 'LOW';
+    } else if (days < 3) {
+      statusColor = Colors.amber.shade700;
+      status = 'WATCH';
+    } else {
+      statusColor = Colors.green;
+      status = 'ADEQUATE';
     }
 
-    return result;
-  }
+    // Display up to seven days on the visual indicator.
+    // This is not a measurement of tank capacity.
+    final progress = days == null
+        ? 0.0
+        : (days / 7).clamp(0.0, 1.0).toDouble();
 
-  List<_RiskRow> get _riskRows {
-    final consumption = _consumptionByStationProduct;
-    final result = <_RiskRow>[];
-
-    for (final station in _stations) {
-      final id = _stationId(station);
-      if (id.isEmpty) continue;
-
-      for (final product in ['PETROL', 'DIESEL']) {
-        final consumptionRow = consumption['$id|$product'];
-
-        if (consumptionRow == null) continue;
-
-        if (_text(consumptionRow['consumption_data_status']).toUpperCase() !=
-            'SUFFICIENT') {
-          continue;
-        }
-
-        final daily = _number(
-          consumptionRow['estimated_daily_consumption_litres'],
-        );
-
-        if (daily <= 0) continue;
-
-        final stock = product == 'PETROL'
-            ? _number(station['current_petrol_litres'])
-            : _number(station['current_diesel_litres']);
-
-        final days = stock / daily;
-
-        result.add(
-          _RiskRow(
-            station: _stationName(station),
-            district: _text(station['district_name']),
-            omc: _text(station['omc']),
-            product: product,
-            stock: stock,
-            dailyConsumption: daily,
-            daysRemaining: days,
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                product,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                status,
+                style: TextStyle(
+                  color: statusColor,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
+
+          const SizedBox(height: 18),
+
+          Text(
+            '${_fmt(stock)} L',
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+
+          const Text(
+            'Current reported stock',
+            style: TextStyle(color: Colors.black54),
+          ),
+
+          const SizedBox(height: 22),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Indicative days of stock'),
+              Text(
+                days == null
+                    ? 'Insufficient data'
+                    : '${days.toStringAsFixed(1)} days',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: statusColor,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 20,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                statusColor,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          const Text(
+            'Visual scale: 0–7 days',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.black54,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          const Divider(),
+
+          const SizedBox(height: 12),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Estimated daily use'),
+              Text(
+                daily > 0
+                    ? '${_fmt(daily)} L/day'
+                    : 'Insufficient data',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final petrol = fuelStockCard('PETROL');
+      final diesel = fuelStockCard('DIESEL');
+
+      if (constraints.maxWidth < 800) {
+        return Column(
+          children: [
+            petrol,
+            const SizedBox(height: 16),
+            diesel,
+          ],
         );
       }
+
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: petrol),
+          const SizedBox(width: 20),
+          Expanded(child: diesel),
+        ],
+      );
+    },
+  );
+}
+
+Widget _deliveryComparison() {
+  Widget fuelComparison(String product) {
+    final expected = _deliveryTotal(product, 'expected_litres');
+    final actual = _deliveryTotal(product, 'actual_litres');
+
+    final percentage = expected > 0
+        ? (actual / expected * 100)
+        : 0.0;
+
+    final barScale = expected > actual ? expected : actual;
+
+    Widget comparisonBar(
+      String label,
+      double litres,
+      Color color,
+    ) {
+      final fraction = barScale > 0
+          ? (litres / barScale).clamp(0.0, 1.0)
+          : 0.0;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label),
+              Text(
+                '${_fmt(litres)} L',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: fraction,
+              minHeight: 18,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ],
+      );
     }
 
-    result.sort((a, b) => a.daysRemaining.compareTo(b.daysRemaining));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              product,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              expected > 0
+                  ? '${percentage.toStringAsFixed(1)}% recorded'
+                  : 'No expected volume',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
 
-    return result;
+        const SizedBox(height: 18),
+
+        comparisonBar(
+          'Expected deliveries',
+          expected,
+          Colors.blue,
+        ),
+
+        const SizedBox(height: 18),
+
+        comparisonBar(
+          'Recorded receipts',
+          actual,
+          Colors.green,
+        ),
+
+        const SizedBox(height: 14),
+
+        Text(
+          'Difference: ${_fmt(actual - expected)} L',
+          style: const TextStyle(
+            color: Colors.black54,
+          ),
+        ),
+      ],
+    );
   }
 
-  String _riskLabel(double days) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      fuelComparison('PETROL'),
+
+      const SizedBox(height: 28),
+      const Divider(),
+      const SizedBox(height: 28),
+
+      fuelComparison('DIESEL'),
+
+      const SizedBox(height: 28),
+      const Divider(),
+      const SizedBox(height: 12),
+
+      const Text(
+        'Same-day station/product comparison only. '
+        'Different-day arrivals, missing attendant entries '
+        'and future schedules are not reconciled. '
+        'A difference does NOT establish non-delivery '
+        'or an unauthorized receipt.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    ],
+  );
+}
+
+  Widget _exceptionsTable() {
+  final exceptions = _exceptions;
+  final stations = _stationIndex;
+
+  final noReceipt = exceptions.where(
+    (r) => _text(r['comparison_status']) == 'NO_SAME_DAY_RECEIPT',
+  ).length;
+
+  final unmatched = exceptions.where(
+    (r) => _text(r['comparison_status']) == 'UNMATCHED_RECEIPT',
+  ).length;
+
+  final partial = exceptions.where(
+    (r) => _text(r['comparison_status']) == 'PARTIAL',
+  ).length;
+
+  final excess = exceptions.where(
+    (r) => _text(r['comparison_status']) == 'EXCESS',
+  ).length;
+
+  Widget summaryCard(
+    String title,
+    int count,
+    Color color,
+    IconData icon,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 30),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final columns = width >= 1000
+              ? 4
+              : width >= 550
+                  ? 2
+                  : 1;
+
+          final cardWidth =
+              (width - (columns - 1) * 12) / columns;
+
+          return Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              SizedBox(
+                width: cardWidth,
+                child: summaryCard(
+                  'No same-day receipt',
+                  noReceipt,
+                  Colors.red,
+                  Icons.warning_amber_rounded,
+                ),
+              ),
+              SizedBox(
+                width: cardWidth,
+                child: summaryCard(
+                  'Unmatched receipts',
+                  unmatched,
+                  Colors.orange,
+                  Icons.local_shipping_outlined,
+                ),
+              ),
+              SizedBox(
+                width: cardWidth,
+                child: summaryCard(
+                  'Partial receipts',
+                  partial,
+                  Colors.amber.shade800,
+                  Icons.trending_down,
+                ),
+              ),
+              SizedBox(
+                width: cardWidth,
+                child: summaryCard(
+                  'Excess receipts',
+                  excess,
+                  Colors.blue,
+                  Icons.trending_up,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+
+      const SizedBox(height: 24),
+
+      Text(
+        '${exceptions.length} station/product/day records need reconciliation',
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+
+      const SizedBox(height: 12),
+
+      if (exceptions.isEmpty)
+        const Text(
+          'No same-day reconciliation differences in this period.',
+        )
+      else
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: const [
+              DataColumn(label: Text('Date')),
+              DataColumn(label: Text('Station')),
+              DataColumn(label: Text('Product')),
+              DataColumn(label: Text('Expected L')),
+              DataColumn(label: Text('Recorded L')),
+              DataColumn(label: Text('Difference L')),
+              DataColumn(label: Text('Preliminary status')),
+            ],
+            rows: exceptions.take(30).map((r) {
+              final station =
+                  stations[_text(r['filling_station_id'])];
+
+              final status = switch (
+                  _text(r['comparison_status'])) {
+                'NO_SAME_DAY_RECEIPT' =>
+                  'No same-day receipt recorded',
+                'UNMATCHED_RECEIPT' =>
+                  'No same-day expectation',
+                'PARTIAL' =>
+                  'Recorded less than expected',
+                'EXCESS' =>
+                  'Recorded more than expected',
+                _ => _text(r['comparison_status']),
+              };
+
+              return DataRow(
+                cells: [
+                  DataCell(
+                    Text(_text(r['delivery_date'])),
+                  ),
+                  DataCell(
+                    SizedBox(
+                      width: 170,
+                      child: Text(
+                        _text(
+                          station?['filling_station_name'],
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(_text(r['product'])),
+                  ),
+                  DataCell(
+                    Text(
+                      _fmt(_num(r['expected_litres'])),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      _fmt(_num(r['actual_litres'])),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      _fmt(_num(r['variance_litres'])),
+                    ),
+                  ),
+                  DataCell(
+                    Text(status),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+
+      if (exceptions.length > 30)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(
+            'Showing 30 of ${exceptions.length} differences.',
+            style: const TextStyle(
+              color: Colors.black54,
+            ),
+          ),
+        ),
+
+      const SizedBox(height: 12),
+
+      const Text(
+        'These categories are based on same-day station/product '
+        'comparisons. They do not establish whether a delivery '
+        'failed, arrived on another date, or was entered late.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _control() {
+  final rejections = _rejections.fold(
+    0, (int s, r) => s + _int(r['rejection_count']),
+  );
+
+  final already = _rejections.fold(
+    0, (int s, r) => s + _int(r['already_fueled_count']),
+  );
+
+  final invalid = _rejections.fold(
+    0, (int s, r) => s + _int(r['invalid_count']),
+  );
+
+  final identifiers = _rejections.fold(
+    0, (int s, r) => s + _int(r['identifier_conflict_count']),
+  );
+
+  final syncConflicts = _fuelings
+      .where((r) => _bool(r['sync_conflict']))
+      .length;
+
+  final overrides = _fuelings
+      .where((r) => _bool(r['override_used']))
+      .length;
+
+  final other = rejections - already - invalid - identifiers;
+
+  final categories = <({String label, int count, Color color})>[
+    (
+      label: 'Already fueled',
+      count: already,
+      color: Colors.orange,
+    ),
+    (
+      label: 'Invalid attempts',
+      count: invalid,
+      color: Colors.red,
+    ),
+    (
+      label: 'Identifier conflicts',
+      count: identifiers,
+      color: Colors.purple,
+    ),
+    if (other > 0)
+      (
+        label: 'Other rejections',
+        count: other,
+        color: Colors.blueGrey,
+      ),
+  ];
+
+  final categoryTotal = categories.fold<int>(
+    0, (sum, item) => sum + item.count,
+  );
+
+  Widget donutChart() {
+    if (categoryTotal == 0) {
+      return const SizedBox(
+        height: 220,
+        child: Center(
+          child: Text('No rejection categories recorded'),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 240,
+      child: PieChart(
+        PieChartData(
+          centerSpaceRadius: 65,
+          sectionsSpace: 3,
+          startDegreeOffset: -90,
+          sections: categories
+              .where((item) => item.count > 0)
+              .map(
+                (item) => PieChartSectionData(
+                  value: item.count.toDouble(),
+                  color: item.color,
+                  radius: 35,
+                  showTitle: false,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget legend() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Rejection breakdown',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        for (final item in categories)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: item.color,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(item.label),
+                ),
+                Text(
+                  _fmt(item.count),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        const SizedBox(height: 8),
+        const Text(
+          'Cumulative rejection data',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.black54,
+          ),
+        ),
+      ],
+    );
+  }
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          _stat(
+            'Rejections',
+            _fmt(rejections),
+            'Cumulative rejection view',
+          ),
+          _stat(
+            'Already fueled',
+            _fmt(already),
+            'Cumulative rejection view',
+          ),
+          _stat(
+            'Invalid attempts',
+            _fmt(invalid),
+            'Cumulative rejection view',
+          ),
+          _stat(
+            'Identifier conflicts',
+            _fmt(identifiers),
+            'Cumulative rejection view',
+          ),
+          _stat(
+            'Sync conflicts',
+            _fmt(syncConflicts),
+            'Selected period',
+          ),
+          _stat(
+            'Overrides',
+            _fmt(overrides),
+            'Selected period',
+          ),
+        ],
+      ),
+
+      const SizedBox(height: 30),
+      const Divider(),
+      const SizedBox(height: 20),
+
+      LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 650) {
+            return Column(
+              children: [
+                donutChart(),
+                const SizedBox(height: 20),
+                legend(),
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: donutChart()),
+              const SizedBox(width: 30),
+              Expanded(child: legend()),
+            ],
+          );
+        },
+      ),
+
+      const SizedBox(height: 12),
+
+      const Text(
+        'The donut chart shows cumulative rejection categories. '
+        'Sync conflicts and overrides relate to the selected '
+        'reporting period and are not included in the chart.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    ],
+  );
+}
+
+  Widget _riskTable() {
+  final stations = _stationIndex;
+
+  final rows = <({
+    String station,
+    String product,
+    double? stock,
+    double daily,
+    double? days,
+  })>[];
+
+  for (final r in _rates) {
+    if (_text(r['consumption_data_status']).toUpperCase() !=
+        'SUFFICIENT') {
+      continue;
+    }
+
+    final product = _text(r['product']).toUpperCase();
+
+    if (product != 'PETROL' && product != 'DIESEL') {
+      continue;
+    }
+
+    final station = stations[_text(r['filling_station_id'])];
+
+    if (station == null) {
+      continue;
+    }
+
+    final daily = _num(
+      r['estimated_daily_consumption_litres'],
+    );
+
+    if (daily <= 0) {
+      continue;
+    }
+
+    final stockField = product == 'PETROL'
+        ? 'current_petrol_litres'
+        : 'current_diesel_litres';
+
+    final rawStock = station[stockField];
+
+    // Missing stock is not equivalent to zero stock.
+    final double? stock =
+        rawStock == null || rawStock.toString().trim().isEmpty
+            ? null
+            : double.tryParse(rawStock.toString());
+
+    final double? days =
+        stock == null ? null : stock / daily;
+
+    rows.add((
+      station: _text(station['filling_station_name']),
+      product: product,
+      stock: stock,
+      daily: daily,
+      days: days,
+    ));
+  }
+
+  // Lowest confirmed days first; missing data last.
+  rows.sort((a, b) {
+    if (a.days == null && b.days == null) return 0;
+    if (a.days == null) return 1;
+    if (b.days == null) return -1;
+    return a.days!.compareTo(b.days!);
+  });
+
+  if (rows.isEmpty) {
+    return const Text(
+      'Insufficient observations for stock risk projections.',
+    );
+  }
+
+  Color riskColor(double? days) {
+    if (days == null) return Colors.grey;
+    if (days < 1) return Colors.red;
+    if (days < 2) return Colors.orange;
+    if (days < 3) return Colors.amber.shade800;
+    return Colors.green;
+  }
+
+  String riskLabel(double? days) {
+    if (days == null) return 'NO STOCK DATA';
     if (days < 1) return 'CRITICAL';
     if (days < 2) return 'LOW';
     if (days < 3) return 'WATCH';
     return 'ADEQUATE';
   }
 
-  Color _riskColor(double days) {
-    if (days < 1) return Colors.red;
-    if (days < 2) return Colors.orange;
-    if (days < 3) return Colors.amber.shade700;
-    return Colors.green;
+  Widget daysIndicator(double? days) {
+    if (days == null) {
+      return const Text(
+        'Not reported',
+        style: TextStyle(color: Colors.grey),
+      );
+    }
+
+    final progress = (days / 7).clamp(0.0, 1.0).toDouble();
+    final color = riskColor(days);
+
+    return SizedBox(
+      width: 140,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${days.toStringAsFixed(1)} days',
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ],
+      ),
+    );
   }
+
+  final missing = rows.where((r) => r.stock == null).length;
+  final critical =
+      rows.where((r) => r.days != null && r.days! < 1).length;
+  final low = rows.where(
+    (r) => r.days != null && r.days! >= 1 && r.days! < 2,
+  ).length;
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          _stat(
+            'Critical',
+            _fmt(critical),
+            'Less than 1 estimated day',
+          ),
+          _stat(
+            'Low',
+            _fmt(low),
+            '1–2 estimated days',
+          ),
+          _stat(
+            'Missing stock data',
+            _fmt(missing),
+            'Cannot assess stock risk',
+          ),
+        ],
+      ),
+
+      const SizedBox(height: 24),
+
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columnSpacing: 24,
+          columns: const [
+            DataColumn(label: Text('Station')),
+            DataColumn(label: Text('Product')),
+            DataColumn(label: Text('Stock L')),
+            DataColumn(label: Text('Est. L/day')),
+            DataColumn(label: Text('Days remaining')),
+            DataColumn(label: Text('Risk')),
+          ],
+          rows: rows.take(25).map((r) {
+            final color = riskColor(r.days);
+
+            return DataRow(
+              cells: [
+                DataCell(
+                  SizedBox(
+                    width: 240,
+                    child: Text(
+                      r.station,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                DataCell(Text(r.product)),
+                DataCell(
+                  Text(
+                    r.stock == null
+                        ? 'Not reported'
+                        : _fmt(r.stock!),
+                  ),
+                ),
+                DataCell(Text(_fmt(r.daily))),
+                DataCell(daysIndicator(r.days)),
+                DataCell(
+                  Text(
+                    riskLabel(r.days),
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+
+      const SizedBox(height: 12),
+
+      Text(
+        'Showing ${rows.length < 25 ? rows.length : 25} '
+        'of ${rows.length} eligible station/product records.',
+        style: const TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+
+      const SizedBox(height: 8),
+
+      const Text(
+        'Risk is estimated from the latest available stock '
+        'and station-specific daily consumption. Missing '
+        'stock values are not treated as zero. '
+        'Stock reporting freshness must be verified separately.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.black54,
+        ),
+      ),
+    ],
+  );
+}
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  return const Center(child: CircularProgressIndicator());
+}
+   if (_error != null) {
+  return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const Text('Unable to load analytics'), const SizedBox(height: 8),
+      SelectableText(_error!), const SizedBox(height: 12),
+      FilledButton(onPressed: _load, child: const Text('Retry')),
+    ]));
+   }
+    return RefreshIndicator(onRefresh: _load, child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(24), child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1600), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(alignment: WrapAlignment.spaceBetween, spacing: 20, runSpacing: 12, children: [
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Fuel Analytics', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+                Text('${_date(_start)} – ${_date(_end)} (Malawi time)',
+                  style: const TextStyle(color: Colors.black54)),
+              ]),
+              Wrap(spacing: 8, children: [
+                for (final p in ['Today', '7 Days', '30 Days', '90 Days'])
+                  ChoiceChip(label: Text(p), selected: _period == p,
+                    onSelected: (_) { setState(() => _period = p); _load(); }),
+                IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+              ]),
+            ]),
+            const SizedBox(height: 20),
+            Wrap(spacing: 12, runSpacing: 12, children: [
+              _stat('Observed petrol use', '${_fmt(_observed('PETROL'))} L', '${_reporting('PETROL')} reporting stations'),
+              _stat('Observed diesel use', '${_fmt(_observed('DIESEL'))} L', '${_reporting('DIESEL')} reporting stations'),
+              _stat('Petrol stock', '${_fmt(_stock('PETROL'))} L', 'Latest reported balances'),
+              _stat('Diesel stock', '${_fmt(_stock('DIESEL'))} L', 'Latest reported balances'),
+              _stat('Fueling transactions', _fmt(_fuelings.length), 'Compliance activity, not consumption'),
+              _stat('Vehicles', _fmt(_fuelings.map((r) {
+                final id = _text(r['vehicle_id']);
+                if (id.isNotEmpty) return id;
+                final code = _text(r['vehicle_code']);
+                return code.isNotEmpty ? code : _text(r['plate_number']);
+              }).where((s) => s.isNotEmpty).toSet().length), 'Unique in selected period'),
+            ]),
+            const SizedBox(height: 20),
+            _panel('Observed Fuel Consumption',
+              'Litres calculated from consecutive physical stock counts and intervening receipts. '
+              'Each interval is plotted on its closing-reading date, NOT as exact daily use.', _trend()),
+            const SizedBox(height: 20),
+            LayoutBuilder(builder: (context, c) {
+              final a = _panel('Regional Consumption', 'Observed litres by station region; selected closing-reading period.', _ranking(_rank('region')));
+              final b = _panel('OMC Consumption', 'Observed litres by current station OMC.', _ranking(_rank('omc')));
+              return c.maxWidth < 950 ? Column(children: [a, const SizedBox(height: 20), b]) :
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: a), const SizedBox(width: 20), Expanded(child: b)]);
+            }),
+            const SizedBox(height: 20),
+            _panel('Station Consumption', 'Top stations by observed litres; partial coverage, not a national ranking.',
+              _ranking(_rank('filling_station_name'))),
+            const SizedBox(height: 20),
+            _panel('Supply & Estimated Days of Stock',
+              'Physical stock and estimated daily consumption from stations with sufficient observations. '
+              'National stock divided by partial-coverage consumption is indicative only.', _supply()),
+            const SizedBox(height: 20),
+            _panel('Expected vs Recorded Deliveries',
+              'Same Malawi calendar period for expected schedules and recorded receipts.', _deliveryComparison()),
+            const SizedBox(height: 20),
+            _panel('Delivery Reconciliation Exceptions',
+              'Preliminary same-day differences; future schedules and cross-day deliveries may appear unmatched.',
+              _exceptionsTable()),
+            const SizedBox(height: 20),
+            _panel('Fuel Control & Exceptions',
+              'Fueling transactions are compliance events; rejection totals are cumulative.', _control()),
+            const SizedBox(height: 20),
+            _panel('Stations at Supply Risk',
+              'Based on latest reported stock and eligible station-specific daily use estimates.', _riskTable()),
+            const SizedBox(height: 20),
+_panel(
+  'Station Reporting Coverage & Freshness',
+  'Physical stock-count submissions by operational filling stations.',
+  Builder(
+    builder: (context) {
+      final total = _stationReporting.length;
+      final reported = _stationReporting.where((r) {
+        final last = _malawi(r['last_report_at']);
+        return last != null && _within(last);
+      }).length;
+      final notReported = total - reported;
+      final percentage = total == 0 ? 0.0 : reported * 100 / total;
+final now = DateTime.now().toUtc();
 
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.error_outline,
-                size: 46,
-                color: Colors.redAccent,
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Unable to load analytics',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.black54),
-              ),
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                onPressed: _loadAnalytics,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try Again'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+int freshnessCount(Duration? minimum, Duration? maximum) {
+  return _stationReporting.where((r) {
+    final last = DateTime.tryParse('${r['last_report_at']}');
+    if (last == null) return false;
 
-    final petrolDays = _daysRemaining(
-      _currentPetrolStock,
-      _petrolDailyConsumption,
-    );
+    final age = now.difference(last.toUtc());
 
-    final dieselDays = _daysRemaining(
-      _currentDieselStock,
-      _dieselDailyConsumption,
-    );
+    if (age.isNegative) return false;
+    if (minimum != null && age <= minimum) return false;
+    if (maximum != null && age > maximum) return false;
 
-    return RefreshIndicator(
-      onRefresh: _loadAnalytics,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Header(
-              selectedPeriod: _selectedPeriod,
-              periods: _periods,
-              startDate: _formatDate(_startDate),
-              endDate: _formatDate(_endDate),
-              onPeriodChanged: _changePeriod,
-              onRefresh: _loadAnalytics,
-            ),
-            const SizedBox(height: 22),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-
-                final columns = width >= 1200
-                    ? 6
-                    : width >= 800
-                    ? 3
-                    : width >= 500
-                    ? 2
-                    : 1;
-
-                final cardWidth = (width - ((columns - 1) * 12)) / columns;
-
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Fueling Transactions',
-                      value: _formatNumber(_totalFuelings),
-                      subtitle: _selectedPeriod,
-                      icon: Icons.local_gas_station,
-                    ),
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Unique Vehicles',
-                      value: _formatNumber(_uniqueVehicles),
-                      subtitle: 'Vehicles / motorcycles',
-                      icon: Icons.directions_car_outlined,
-                    ),
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Active Stations',
-                      value: _formatNumber(_activeStations),
-                      subtitle: 'Recorded fuelings',
-                      icon: Icons.storefront_outlined,
-                    ),
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Expected Deliveries',
-                      value: _formatLitres(_expectedLitres),
-                      subtitle: 'Selected period',
-                      icon: Icons.local_shipping_outlined,
-                    ),
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Sync Conflicts',
-                      value: _formatNumber(_syncConflicts),
-                      subtitle: 'Fueling records',
-                      icon: Icons.sync_problem_outlined,
-                    ),
-                    _KpiCard(
-                      width: cardWidth,
-                      title: 'Overrides',
-                      value: _formatNumber(_overrides),
-                      subtitle: 'Fueling controls',
-                      icon: Icons.admin_panel_settings_outlined,
-                    ),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 22),
-
-            _Panel(
-              title: 'Fueling Activity Trend',
-              subtitle: 'Fueling transactions by Malawi calendar day',
-              child: SizedBox(
-                height: 300,
-                child: _DailyTrendChart(values: _fuelingsByDay),
-              ),
-            ),
-
-            const SizedBox(height: 22),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 1050;
-
-                final supply = _SupplyConsumptionPanel(
-                  petrolStock: _currentPetrolStock,
-                  dieselStock: _currentDieselStock,
-                  petrolDailyConsumption: _petrolDailyConsumption,
-                  dieselDailyConsumption: _dieselDailyConsumption,
-                  expectedByProduct: _expectedByProduct,
-                  formatLitres: _formatLitres,
-                );
-
-                final days = _DaysRemainingPanel(
-                  petrolDays: petrolDays,
-                  dieselDays: dieselDays,
-                  petrolStock: _currentPetrolStock,
-                  dieselStock: _currentDieselStock,
-                  petrolDailyConsumption: _petrolDailyConsumption,
-                  dieselDailyConsumption: _dieselDailyConsumption,
-                  formatLitres: _formatLitres,
-                  riskLabel: _riskLabel,
-                  riskColor: _riskColor,
-                );
-
-                if (!wide) {
-                  return Column(
-                    children: [supply, const SizedBox(height: 22), days],
-                  );
-                }
-
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: supply),
-                    const SizedBox(width: 22),
-                    Expanded(child: days),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 22),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 1050;
-
-                final region = _RankingPanel(
-                  title: 'Regional Fueling Activity',
-                  subtitle: 'Transactions by region',
-                  rows: _fuelingsByRegion,
-                  emptyText: 'No regional fueling activity.',
-                );
-
-                final omc = _RankingPanel(
-                  title: 'OMC Fueling Activity',
-                  subtitle: 'Transactions by OMC',
-                  rows: _fuelingsByOmc,
-                  emptyText: 'No OMC fueling activity.',
-                );
-
-                if (!wide) {
-                  return Column(
-                    children: [region, const SizedBox(height: 22), omc],
-                  );
-                }
-
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: region),
-                    const SizedBox(width: 22),
-                    Expanded(child: omc),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 22),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 1050;
-
-                final stations = _RankingPanel(
-                  title: 'Busiest Filling Stations',
-                  subtitle: 'Fueling transactions during selected period',
-                  rows: _fuelingsByStation.take(10).toList(),
-                  emptyText: 'No station fueling activity.',
-                );
-
-                final hourly = _Panel(
-                  title: 'Fueling Demand by Hour',
-                  subtitle: 'Malawi local time',
-                  child: SizedBox(
-                    height: 320,
-                    child: _HourlyDemandChart(values: _fuelingsByHour),
-                  ),
-                );
-
-                if (!wide) {
-                  return Column(
-                    children: [stations, const SizedBox(height: 22), hourly],
-                  );
-                }
-
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: stations),
-                    const SizedBox(width: 22),
-                    Expanded(child: hourly),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 22),
-
-            _ControlAnalyticsPanel(
-              totalRejections: _totalRejections,
-              syncConflicts: _syncConflicts,
-              overrides: _overrides,
-              rejections: _rejections,
-              formatNumber: _formatNumber,
-            ),
-
-            const SizedBox(height: 22),
-
-            _RiskTable(
-              rows: _riskRows,
-              formatLitres: _formatLitres,
-              riskLabel: _riskLabel,
-              riskColor: _riskColor,
-            ),
-
-            const SizedBox(height: 22),
-
-            _Panel(
-              title: 'Expected vs Recorded Supply',
-              subtitle:
-                  'Expected deliveries are shown for the selected period. '
-                  'Recorded receipts currently use the cumulative receipt '
-                  'view and are therefore shown separately until a '
-                  'period-based receipt analytics view is added.',
-              child: _ExpectedRecordedSupply(
-                expectedByProduct: _expectedByProduct,
-                regionalReceipts: _regionalReceipts,
-                formatLitres: _formatLitres,
-              ),
-            ),
-
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
-  }
+    return true;
+  }).length;
 }
 
-class _Header extends StatelessWidget {
-  const _Header({
-    required this.selectedPeriod,
-    required this.periods,
-    required this.startDate,
-    required this.endDate,
-    required this.onPeriodChanged,
-    required this.onRefresh,
-  });
+final within24h = freshnessCount(
+  null,
+  const Duration(hours: 24),
+);
 
-  final String selectedPeriod;
-  final List<String> periods;
-  final String startDate;
-  final String endDate;
-  final ValueChanged<String> onPeriodChanged;
-  final VoidCallback onRefresh;
+final between24and48h = freshnessCount(
+  const Duration(hours: 24),
+  const Duration(hours: 48),
+);
 
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final narrow = constraints.maxWidth < 850;
+final between48hAnd7d = freshnessCount(
+  const Duration(hours: 48),
+  const Duration(days: 7),
+);
 
-        final title = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Analytics',
-              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              'Fuel supply, demand, consumption and control intelligence',
-              style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              startDate == endDate ? startDate : '$startDate - $endDate',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.black54,
-              ),
-            ),
-          ],
-        );
+final olderThan7d = freshnessCount(
+  const Duration(days: 7),
+  null,
+);
 
-        final controls = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            ...periods.map(
-              (period) => ChoiceChip(
-                label: Text(period),
-                selected: period == selectedPeriod,
-                onSelected: (_) => onPeriodChanged(period),
-              ),
-            ),
-            IconButton.filledTonal(
-              onPressed: onRefresh,
-              tooltip: 'Refresh analytics',
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-        );
+final neverReported = _stationReporting
+    .where((r) => r['last_report_at'] == null)
+    .length;
 
-        if (narrow) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [title, const SizedBox(height: 16), controls],
-          );
-        }
+final overdueStations = _stationReporting.where((r) {
+  final omc = _text(r['omc']);
 
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: title),
-            controls,
-          ],
-        );
-      },
-    );
+  if (_selectedReportingOmc != 'All OMCs' &&
+      omc != _selectedReportingOmc) {
+    return false;
   }
-}
 
-class _KpiCard extends StatelessWidget {
-  const _KpiCard({
-    required this.width,
-    required this.title,
-    required this.value,
-    required this.subtitle,
-    required this.icon,
-  });
+  final last = DateTime.tryParse('${r['last_report_at']}');
 
-  final double width;
-  final String title;
-  final String value;
-  final String subtitle;
-  final IconData icon;
+  if (last == null) return true;
 
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.07)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF006B54).withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.analytics_outlined,
-                    color: Color(0xFF006B54),
-                    size: 21,
-                  ),
-                ),
-                const Spacer(),
-                Icon(icon, size: 20, color: Colors.black38),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              subtitle,
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-          ],
-        ),
-      ),
-    );
+  return now.difference(last.toUtc()) >
+      const Duration(days: 7);
+}).toList();
+
+overdueStations.sort((a, b) {
+  final aDate = DateTime.tryParse('${a['last_report_at']}');
+  final bDate = DateTime.tryParse('${b['last_report_at']}');
+
+  if (aDate == null && bDate != null) return -1;
+  if (aDate != null && bDate == null) return 1;
+
+  if (aDate != null && bDate != null) {
+    return aDate.compareTo(bDate);
   }
-}
 
-class _Panel extends StatelessWidget {
-  const _Panel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-  });
+  return _text(a['filling_station_name'])
+      .compareTo(_text(b['filling_station_name']));
+});
 
-  final String title;
-  final String subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.07)),
-      ),
-      child: Column(
+return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
-          ),
-          const SizedBox(height: 18),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _DailyTrendChart extends StatelessWidget {
-  const _DailyTrendChart({required this.values});
-
-  final Map<DateTime, Map<String, int>> values;
-
-  @override
-  Widget build(BuildContext context) {
-    if (values.isEmpty) {
-      return const Center(
-        child: Text('No fueling trend data available.'),
-      );
-    }
-
-    final entries = values.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
-
-    final petrolSpots = <FlSpot>[];
-    final dieselSpots = <FlSpot>[];
-
-    var maxValue = 0;
-
-    for (var i = 0; i < entries.length; i++) {
-      final petrol = entries[i].value['PETROL'] ?? 0;
-      final diesel = entries[i].value['DIESEL'] ?? 0;
-
-      petrolSpots.add(
-        FlSpot(i.toDouble(), petrol.toDouble()),
-      );
-
-      dieselSpots.add(
-        FlSpot(i.toDouble(), diesel.toDouble()),
-      );
-
-      maxValue = math.max(
-        maxValue,
-        math.max(petrol, diesel),
-      );
-    }
-
-    const petrolColor = Color(0xFF18A94B);
-    const dieselColor = Color(0xFFF4B41A);
-
-    return Column(
-      children: [
-        const Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            _ChartLegendItem(
-              color: petrolColor,
-              label: 'Petrol',
-            ),
-            SizedBox(width: 20),
-            _ChartLegendItem(
-              color: dieselColor,
-              label: 'Diesel',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: LineChart(
-            LineChartData(
-              minY: 0,
-              maxY: math.max(5, maxValue * 1.2).toDouble(),
-              gridData: const FlGridData(
-                show: true,
-                drawVerticalLine: false,
-              ),
-              borderData: FlBorderData(show: false),
-              titlesData: FlTitlesData(
-                topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                leftTitles: const AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 42,
-                  ),
-                ),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 34,
-                    interval: entries.length > 30
-                        ? 10
-                        : entries.length > 10
-                            ? 5
-                            : 1,
-                    getTitlesWidget: (value, meta) {
-                      final index = value.round();
-
-                      if (index < 0 || index >= entries.length) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final date = entries[index].key;
-
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          '${date.day}/${date.month}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.black54,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              lineTouchData: LineTouchData(
-                enabled: true,
-                touchTooltipData: LineTouchTooltipData(
-                  getTooltipItems: (touchedSpots) {
-                    return touchedSpots.map((spot) {
-                      final index = spot.x.round();
-
-                      if (index < 0 || index >= entries.length) {
-                        return null;
-                      }
-
-                      final date = entries[index].key;
-                      final product =
-                          spot.barIndex == 0 ? 'Petrol' : 'Diesel';
-
-                      return LineTooltipItem(
-                        '$product\n'
-                        '${date.day}/${date.month}: '
-                        '${spot.y.toInt()} transactions',
-                        const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      );
-                    }).toList();
-                  },
-                ),
-              ),
-              lineBarsData: [
-                LineChartBarData(
-                  spots: petrolSpots,
-                  isCurved: true,
-                  barWidth: 3,
-                  color: petrolColor,
-                  dotData: FlDotData(
-                    show: entries.length <= 14,
-                  ),
-                  belowBarData: BarAreaData(
-                    show: true,
-                    color: petrolColor.withValues(alpha: 0.06),
-                  ),
-                ),
-                LineChartBarData(
-                  spots: dieselSpots,
-                  isCurved: true,
-                  barWidth: 3,
-                  color: dieselColor,
-                  dotData: FlDotData(
-                    show: entries.length <= 14,
-                  ),
-                  belowBarData: BarAreaData(
-                    show: false,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChartLegendItem extends StatelessWidget {
-  const _ChartLegendItem({
-    required this.color,
-    required this.label,
-  });
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 22,
-          height: 4,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 7),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _HourlyDemandChart extends StatelessWidget {
-  const _HourlyDemandChart({required this.values});
-
-  final Map<int, Map<String, int>> values;
-
-  @override
-  Widget build(BuildContext context) {
-    var maxValue = 0;
-
-    for (final value in values.values) {
-      maxValue = math.max(maxValue, value['PETROL'] ?? 0);
-      maxValue = math.max(maxValue, value['DIESEL'] ?? 0);
-    }
-
-    const petrolColor = Color(0xFF18A94B);
-    const dieselColor = Color(0xFFF4B41A);
-
-    return Column(
-      children: [
-        const Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            _ChartLegendItem(
-              color: petrolColor,
-              label: 'Petrol',
-            ),
-            SizedBox(width: 18),
-            _ChartLegendItem(
-              color: dieselColor,
-              label: 'Diesel',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: BarChart(
-            BarChartData(
-              minY: 0,
-              maxY: math.max(5, maxValue * 1.2).toDouble(),
-              gridData: const FlGridData(
-                show: true,
-                drawVerticalLine: false,
-              ),
-              borderData: FlBorderData(show: false),
-              titlesData: FlTitlesData(
-                topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                leftTitles: const AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 38,
-                  ),
-                ),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 30,
-                    getTitlesWidget: (value, meta) {
-                      final hour = value.toInt();
-
-                      if (hour % 3 != 0) {
-                        return const SizedBox.shrink();
-                      }
-
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          hour.toString().padLeft(2, '0'),
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.black54,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              barTouchData: BarTouchData(
-                touchTooltipData: BarTouchTooltipData(
-                  getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                    final product = rodIndex == 0 ? 'Petrol' : 'Diesel';
-                    final hour =
-                        group.x.toString().padLeft(2, '0');
-
-                    return BarTooltipItem(
-                      '$product\n$hour:00\n${rod.toY.toInt()} transactions',
-                      const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    );
-                  },
-                ),
-              ),
-              barGroups: [
-                for (var hour = 0; hour < 24; hour++)
-                  BarChartGroupData(
-                    x: hour,
-                    barsSpace: 2,
-                    barRods: [
-                      BarChartRodData(
-                        toY:
-                            (values[hour]?['PETROL'] ?? 0).toDouble(),
-                        width: 6,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(3),
-                        ),
-                        color: petrolColor,
-                      ),
-                      BarChartRodData(
-                        toY:
-                            (values[hour]?['DIESEL'] ?? 0).toDouble(),
-                        width: 6,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(3),
-                        ),
-                        color: dieselColor,
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SupplyConsumptionPanel extends StatelessWidget {
-  const _SupplyConsumptionPanel({
-    required this.petrolStock,
-    required this.dieselStock,
-    required this.petrolDailyConsumption,
-    required this.dieselDailyConsumption,
-    required this.expectedByProduct,
-    required this.formatLitres,
-  });
-
-  final double petrolStock;
-  final double dieselStock;
-  final double petrolDailyConsumption;
-  final double dieselDailyConsumption;
-  final Map<String, double> expectedByProduct;
-  final String Function(double) formatLitres;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Panel(
-      title: 'Supply & Consumption',
-      subtitle:
-          'Current physical stock, estimated daily consumption and expected supply',
-      child: Column(
-        children: [
-          _SupplyRow(
-            product: 'Petrol',
-            stock: petrolStock,
-            dailyConsumption: petrolDailyConsumption,
-            expected: expectedByProduct['PETROL'] ?? 0,
-            formatLitres: formatLitres,
-          ),
-          const Divider(height: 28),
-          _SupplyRow(
-            product: 'Diesel',
-            stock: dieselStock,
-            dailyConsumption: dieselDailyConsumption,
-            expected: expectedByProduct['DIESEL'] ?? 0,
-            formatLitres: formatLitres,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SupplyRow extends StatelessWidget {
-  const _SupplyRow({
-    required this.product,
-    required this.stock,
-    required this.dailyConsumption,
-    required this.expected,
-    required this.formatLitres,
-  });
-
-  final String product;
-  final double stock;
-  final double dailyConsumption;
-  final double expected;
-  final String Function(double) formatLitres;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          flex: 2,
-          child: Text(
-            product,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: _Metric(label: 'Current Stock', value: formatLitres(stock)),
-        ),
-        Expanded(
-          flex: 3,
-          child: _Metric(
-            label: 'Est. Daily Use',
-            value: dailyConsumption > 0
-                ? formatLitres(dailyConsumption)
-                : 'Insufficient data',
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: _Metric(label: 'Expected', value: formatLitres(expected)),
-        ),
-      ],
-    );
-  }
-}
-
-class _DaysRemainingPanel extends StatelessWidget {
-  const _DaysRemainingPanel({
-    required this.petrolDays,
-    required this.dieselDays,
-    required this.petrolStock,
-    required this.dieselStock,
-    required this.petrolDailyConsumption,
-    required this.dieselDailyConsumption,
-    required this.formatLitres,
-    required this.riskLabel,
-    required this.riskColor,
-  });
-
-  final double? petrolDays;
-  final double? dieselDays;
-  final double petrolStock;
-  final double dieselStock;
-  final double petrolDailyConsumption;
-  final double dieselDailyConsumption;
-  final String Function(double) formatLitres;
-  final String Function(double) riskLabel;
-  final Color Function(double) riskColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Panel(
-      title: 'Estimated Days of Stock',
-      subtitle: 'Current stock divided by estimated daily consumption',
-      child: Column(
-        children: [
-          _DaysRow(
-            product: 'Petrol',
-            days: petrolDays,
-            stock: petrolStock,
-            dailyConsumption: petrolDailyConsumption,
-            formatLitres: formatLitres,
-            riskLabel: riskLabel,
-            riskColor: riskColor,
-          ),
-          const Divider(height: 28),
-          _DaysRow(
-            product: 'Diesel',
-            days: dieselDays,
-            stock: dieselStock,
-            dailyConsumption: dieselDailyConsumption,
-            formatLitres: formatLitres,
-            riskLabel: riskLabel,
-            riskColor: riskColor,
-          ),
-          const SizedBox(height: 14),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Risk guide: Critical <1 day • Low <2 days • '
-              'Watch <3 days • Adequate ≥3 days',
-              style: TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DaysRow extends StatelessWidget {
-  const _DaysRow({
-    required this.product,
-    required this.days,
-    required this.stock,
-    required this.dailyConsumption,
-    required this.formatLitres,
-    required this.riskLabel,
-    required this.riskColor,
-  });
-
-  final String product;
-  final double? days;
-  final double stock;
-  final double dailyConsumption;
-  final String Function(double) formatLitres;
-  final String Function(double) riskLabel;
-  final Color Function(double) riskColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = days;
-
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              Text(
-                product,
-                style: const TextStyle(fontWeight: FontWeight.w800),
+              _stat(
+                'Operational stations',
+                _fmt(total),
+                'Eligible active operational stations',
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${formatLitres(stock)} stock',
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              _stat(
+                'Stations reporting',
+                _fmt(reported),
+                'Stock counts in selected period',
               ),
-              Text(
-                dailyConsumption > 0
-                    ? '${formatLitres(dailyConsumption)} / day'
-                    : 'Insufficient consumption data',
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              _stat(
+                'Not reporting',
+                _fmt(notReported),
+                'No stock count in selected period',
+              ),
+              _stat(
+                'Reporting coverage',
+                '${percentage.toStringAsFixed(1)}%',
+                'Selected period',
               ),
             ],
           ),
-        ),
-        const SizedBox(width: 12),
-        if (value == null)
+
+          const SizedBox(height: 24),
+
+const Text(
+  'Reporting Freshness',
+  style: TextStyle(
+    fontSize: 17,
+    fontWeight: FontWeight.bold,
+  ),
+),
+
+const SizedBox(height: 8),
+
+const Text(
+  'Time since each station last submitted a physical stock count. '
+  'Calculated from the current time, independently of the selected period.',
+  style: TextStyle(
+    fontSize: 12,
+    color: Colors.black54,
+  ),
+),
+
+const SizedBox(height: 16),
+
+Wrap(
+  spacing: 12,
+  runSpacing: 12,
+  children: [
+    _stat(
+      'Within 24 hours',
+      _fmt(within24h),
+      'Latest report within 24 hours',
+    ),
+    _stat(
+      '24–48 hours',
+      _fmt(between24and48h),
+      'Latest report 1–2 days ago',
+    ),
+    _stat(
+      '48 hours–7 days',
+      _fmt(between48hAnd7d),
+      'Latest report 2–7 days ago',
+    ),
+    _stat(
+      'Older than 7 days',
+      _fmt(olderThan7d),
+      'Last report over 7 days ago',
+    ),
+    _stat(
+      'Never reported',
+      _fmt(neverReported),
+      'No physical stock count recorded',
+    ),
+  ],
+),
+
+const SizedBox(height: 24),
+const Divider(),
+const SizedBox(height: 16),
+
+const SizedBox(height: 12),
+
+DropdownButtonFormField<String>(
+  key: ValueKey(_selectedReportingOmc),
+  initialValue: _selectedReportingOmc,
+  decoration: const InputDecoration(
+    labelText: 'Filter filling stations by OMC',
+    border: OutlineInputBorder(),
+    prefixIcon: Icon(Icons.filter_list),
+  ),
+  isExpanded: true,
+  items: [
+    'All OMCs',
+    ..._stationReporting
+        .map((r) => _text(r['omc']))
+        .where((omc) => omc.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort(),
+  ].map((omc) {
+    return DropdownMenuItem<String>(
+      value: omc,
+      child: Text(omc),
+    );
+  }).toList(),
+  onChanged: (value) {
+    if (value == null) return;
+    setState(() {
+      _selectedReportingOmc = value;
+    });
+  },
+),
+
+const SizedBox(height: 16),
+
+Text(
+  'Stations Requiring Reporting Follow-up (${overdueStations.length})',
+  style: const TextStyle(
+    fontSize: 17,
+    fontWeight: FontWeight.bold,
+  ),
+),
+
+const SizedBox(height: 8),
+
+const Text(
+  'Operational stations with no recorded physical stock count '
+  'or whose latest count is more than seven days old.',
+  style: TextStyle(fontSize: 12, color: Colors.black54),
+),
+
+const SizedBox(height: 16),
+
+if (overdueStations.isEmpty)
+  const Text('No stations currently require reporting follow-up.')
+else
+SizedBox(
+  height: 400,
+  child: SingleChildScrollView(
+    scrollDirection: Axis.vertical,
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+      columns: const [
+        DataColumn(label: Text('Station')),
+        DataColumn(label: Text('OMC')),
+        DataColumn(label: Text('Last stock count')),
+        DataColumn(label: Text('Status')),
+      ],
+      rows: overdueStations.map((r) {
+        final last = _malawi(r['last_report_at']);
+        final status = last == null
+            ? 'NEVER REPORTED'
+            : 'OLDER THAN 7 DAYS';
+
+        return DataRow(
+          cells: [
+DataCell(
+  SizedBox(
+    width: 350,
+    child: Text(
+      _text(r['filling_station_name']),
+      softWrap: true,
+    ),
+  ),
+),
+            DataCell(Text(_text(r['omc']))),
+            DataCell(
+              Text(
+                last == null
+                    ? 'Never'
+                    : '${_date(last)} '
+                      '${last.hour.toString().padLeft(2, '0')}:'
+                      '${last.minute.toString().padLeft(2, '0')}',
+              ),
+            ),
+            DataCell(
+              Text(
+                status,
+                style: TextStyle(
+                  color: last == null ? Colors.red : Colors.orange,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      }).toList(),
+        ), // Closes DataTable
+      ),   // Closes horizontal SingleChildScrollView
+    ),     // Closes vertical SingleChildScrollView
+  ),       // Closes SizedBox
+
+
+          const SizedBox(height: 16),
+          LinearProgressIndicator(
+            value: total == 0 ? 0 : reported / total,
+            minHeight: 14,
+            backgroundColor: Colors.grey.shade200,
+            color: Colors.green,
+          ),
+          const SizedBox(height: 12),
           const Text(
-            'Insufficient Data',
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              color: Colors.black54,
-            ),
-          )
-        else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${value.toStringAsFixed(1)} days',
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                decoration: BoxDecoration(
-                  color: riskColor(value).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  riskLabel(value),
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: riskColor(value),
-                  ),
-                ),
-              ),
-            ],
+            'Reporting means at least one valid physical stock-count '
+            'submission during the selected period. It does not '
+            'measure whether a station met a required reporting '
+            'frequency. Freshness will be shown separately.',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
           ),
-      ],
-    );
-  }
-}
+        ],
+      );
+    },
+  ),
+),
 
-class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value});
 
-  final String label;
-  final String value;
+_panel(
+  'OMC Expected Delivery Reporting',
+  'Reporting activity by registered Oil Marketing Companies.',
+  Builder(
+    builder: (context) {
+      final total = _omcReporting.length;
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 10, color: Colors.black54),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-        ),
-      ],
-    );
-  }
-}
+      final everReported = _omcReporting
+          .where((r) => (r['total_submissions'] as num? ?? 0) > 0)
+          .length;
 
-class _RankingPanel extends StatelessWidget {
-  const _RankingPanel({
-    required this.title,
-    required this.subtitle,
-    required this.rows,
-    required this.emptyText,
-  });
+      final neverReported = total - everReported;
 
-  final String title;
-  final String subtitle;
-  final List<MapEntry<String, Map<String, int>>> rows;
-  final String emptyText;
-
-  @override
-  Widget build(BuildContext context) {
-    var maxValue = 1;
-
-    for (final row in rows) {
-      final total =
-          (row.value['PETROL'] ?? 0) + (row.value['DIESEL'] ?? 0);
-      maxValue = math.max(maxValue, total);
-    }
-
-    const petrolColor = Color(0xFF18A94B);
-    const dieselColor = Color(0xFFF4B41A);
-
-    return _Panel(
-      title: title,
-      subtitle: subtitle,
-      child: rows.isEmpty
-          ? SizedBox(
-              height: 160,
-              child: Center(
-                child: Text(
-                  emptyText,
-                  style: const TextStyle(color: Colors.black54),
-                ),
-              ),
-            )
-          : Column(
-              children: [
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    _ChartLegendItem(
-                      color: petrolColor,
-                      label: 'Petrol',
-                    ),
-                    SizedBox(width: 18),
-                    _ChartLegendItem(
-                      color: dieselColor,
-                      label: 'Diesel',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                ...rows.take(10).map((row) {
-                  final petrol = row.value['PETROL'] ?? 0;
-                  final diesel = row.value['DIESEL'] ?? 0;
-                  final total = petrol + diesel;
-
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                row.key,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Total $total',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 7),
-                        Row(
-                          children: [
-                            const SizedBox(
-                              width: 44,
-                              child: Text(
-                                'Petrol',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: LinearProgressIndicator(
-                                  minHeight: 6,
-                                  value: petrol / maxValue,
-                                  backgroundColor: Colors.black12,
-                                  color: petrolColor,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 35,
-                              child: Text(
-                                '$petrol',
-                                textAlign: TextAlign.right,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 5),
-                        Row(
-                          children: [
-                            const SizedBox(
-                              width: 44,
-                              child: Text(
-                                'Diesel',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: LinearProgressIndicator(
-                                  minHeight: 6,
-                                  value: diesel / maxValue,
-                                  backgroundColor: Colors.black12,
-                                  color: dieselColor,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 35,
-                              child: Text(
-                                '$diesel',
-                                textAlign: TextAlign.right,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-            ),
-    );
-  }
-}
-
-class _ControlAnalyticsPanel extends StatelessWidget {
-  const _ControlAnalyticsPanel({
-    required this.totalRejections,
-    required this.syncConflicts,
-    required this.overrides,
-    required this.rejections,
-    required this.formatNumber,
-  });
-
-  final int totalRejections;
-  final int syncConflicts;
-  final int overrides;
-  final List<Map<String, dynamic>> rejections;
-  final String Function(num) formatNumber;
-
-  int _integer(dynamic value) {
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final alreadyFueled = rejections.fold<int>(
-      0,
-      (sum, row) => sum + _integer(row['already_fueled_count']),
-    );
-
-    final identifierConflicts = rejections.fold<int>(
-      0,
-      (sum, row) => sum + _integer(row['identifier_conflict_count']),
-    );
-
-    final invalid = rejections.fold<int>(
-      0,
-      (sum, row) => sum + _integer(row['invalid_count']),
-    );
-
-    return _Panel(
-      title: 'Fuel Control & Exception Analytics',
-      subtitle:
-          'Restriction enforcement, rejection cases, overrides and synchronization exceptions',
-      child: Wrap(
+return Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  children: [
+    Wrap(
         spacing: 12,
         runSpacing: 12,
         children: [
-          _SmallStat(
-            label: 'Total Rejections',
-            value: formatNumber(totalRejections),
+          _stat(
+            'Active OMCs',
+            _fmt(total),
+            'Excludes N/A and unassigned',
           ),
-          _SmallStat(
-            label: 'Already Fueled',
-            value: formatNumber(alreadyFueled),
+          _stat(
+            'Ever reported',
+            _fmt(everReported),
+            'At least one expected-delivery submission',
           ),
-          _SmallStat(
-            label: 'Identifier Conflicts',
-            value: formatNumber(identifierConflicts),
-          ),
-          _SmallStat(label: 'Invalid Attempts', value: formatNumber(invalid)),
-          _SmallStat(
-            label: 'Sync Conflicts',
-            value: formatNumber(syncConflicts),
-          ),
-          _SmallStat(label: 'Overrides', value: formatNumber(overrides)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SmallStat extends StatelessWidget {
-  const _SmallStat({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 175,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F8F7),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
+           _stat(
+            'Never reported',
+            _fmt(neverReported),
+            'No expected-delivery submissions recorded',
           ),
         ],
       ),
-    );
-  }
-}
+const SizedBox(height: 24),
+const Divider(),
+const SizedBox(height: 16),
 
-class _RiskRow {
-  const _RiskRow({
-    required this.station,
-    required this.district,
-    required this.omc,
-    required this.product,
-    required this.stock,
-    required this.dailyConsumption,
-    required this.daysRemaining,
-  });
+const Text(
+  'OMC Reporting Status',
+  style: TextStyle(
+    fontSize: 17,
+    fontWeight: FontWeight.bold,
+  ),
+),
 
-  final String station;
-  final String district;
-  final String omc;
-  final String product;
-  final double stock;
-  final double dailyConsumption;
-  final double daysRemaining;
-}
+const SizedBox(height: 8),
 
-class _RiskTable extends StatelessWidget {
-  const _RiskTable({
-    required this.rows,
-    required this.formatLitres,
-    required this.riskLabel,
-    required this.riskColor,
-  });
+const Text(
+  'Historical expected-delivery submissions by OMC. '
+  'Companies that have never submitted are listed first.',
+  style: TextStyle(fontSize: 12, color: Colors.black54),
+),
 
-  final List<_RiskRow> rows;
-  final String Function(double) formatLitres;
-  final String Function(double) riskLabel;
-  final Color Function(double) riskColor;
+const SizedBox(height: 16),
 
-  @override
-  Widget build(BuildContext context) {
-    final visibleRows = rows.take(25).toList();
+SizedBox(
+  height: 400,
+  child: SingleChildScrollView(
+    scrollDirection: Axis.vertical,
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columns: const [
+          DataColumn(label: Text('OMC')),
+          DataColumn(label: Text('Total submissions')),
+          DataColumn(label: Text('Last submission')),
+          DataColumn(label: Text('Status')),
+        ],
+        rows: (_omcReporting.toList()
+              ..sort((a, b) {
+                final countCompare = _int(a['total_submissions'])
+                    .compareTo(_int(b['total_submissions']));
+                if (countCompare != 0) return countCompare;
+                return _text(a['omc_name'])
+                    .compareTo(_text(b['omc_name']));
+              }))
+            .map((r) {
+          final count = _int(r['total_submissions']);
+          final last = _malawi(r['last_submission_at']);
+          final reported = count > 0;
 
-    return _Panel(
-      title: 'Stations at Supply Risk',
-      subtitle:
-          'Projection based on current stock and sufficient observed consumption data',
-      child: visibleRows.isEmpty
-          ? const SizedBox(
-              height: 150,
-              child: Center(
-                child: Text(
-                  'Insufficient consumption data for supply-risk projection.',
-                  style: TextStyle(color: Colors.black54),
+          return DataRow(
+            cells: [
+              DataCell(
+                SizedBox(
+                  width: 230,
+                  child: Text(_text(r['omc_name'])),
                 ),
               ),
-            )
-          : SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: 1050,
-                child: Table(
-                  columnWidths: const {
-                    0: FlexColumnWidth(2.4),
-                    1: FlexColumnWidth(1.2),
-                    2: FlexColumnWidth(1.2),
-                    3: FlexColumnWidth(1.0),
-                    4: FlexColumnWidth(1.3),
-                    5: FlexColumnWidth(1.4),
-                    6: FlexColumnWidth(1.1),
-                    7: FlexColumnWidth(1.1),
-                  },
-                  border: const TableBorder(
-                    horizontalInside: BorderSide(color: Colors.black12),
+              DataCell(Text(_fmt(count))),
+              DataCell(
+                Text(
+                  last == null
+                      ? 'Never'
+                      : '${_date(last)} '
+                        '${last.hour.toString().padLeft(2, '0')}:'
+                        '${last.minute.toString().padLeft(2, '0')}',
+                ),
+              ),
+              DataCell(
+                Text(
+                  reported ? 'REPORTED' : 'NEVER REPORTED',
+                  style: TextStyle(
+                    color: reported ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.w600,
                   ),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+      ),
+    ),
+  ),
+),
+
+    ],
+  );
+    },
+  ),
+),
+
+const SizedBox(height: 20),
+
+_panel(
+  'Reporting Coverage & Limitations',
+  'Stations with valid stock-count intervals contributing to observed consumption.',
+  LayoutBuilder(
+    builder: (context, constraints) {
+      final petrol = _reporting('PETROL');
+      final diesel = _reporting('DIESEL');
+
+      // These are counts of stations contributing observations,
+      // not percentages of all stations.
+      Widget reportingCard(
+        String product,
+        int count,
+        Color color,
+        IconData icon,
+      ) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: color.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 36, color: color),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const TableRow(
-                      decoration: BoxDecoration(color: Color(0xFFF4F7F6)),
-                      children: [
-                        _TH('Station'),
-                        _TH('District'),
-                        _TH('OMC'),
-                        _TH('Product'),
-                        _TH('Current Stock'),
-                        _TH('Est. L/day'),
-                        _TH('Days Left'),
-                        _TH('Risk'),
-                      ],
+                    Text(
+                      product,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    ...visibleRows.map(
-                      (row) => TableRow(
-                        children: [
-                          _TD(row.station),
-                          _TD(row.district),
-                          _TD(row.omc),
-                          _TD(row.product),
-                          _TD(formatLitres(row.stock), right: true),
-                          _TD(formatLitres(row.dailyConsumption), right: true),
-                          _TD(
-                            row.daysRemaining.toStringAsFixed(1),
-                            right: true,
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 10,
-                            ),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: riskColor(
-                                    row.daysRemaining,
-                                  ).withValues(alpha: 0.12),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  riskLabel(row.daysRemaining),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    color: riskColor(row.daysRemaining),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                    const SizedBox(height: 8),
+                    Text(
+                      _fmt(count),
+                      style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                        color: color,
+                      ),
+                    ),
+                    const Text(
+                      'Stations with valid intervals',
+                      style: TextStyle(
+                        color: Colors.black54,
+                        fontSize: 12,
                       ),
                     ),
                   ],
                 ),
               ),
+            ],
+          ),
+        );
+      }
+
+      final petrolCard = reportingCard(
+        'PETROL',
+        petrol,
+        Colors.blue,
+        Icons.local_gas_station,
+      );
+
+      final dieselCard = reportingCard(
+        'DIESEL',
+        diesel,
+        Colors.green,
+        Icons.local_gas_station,
+      );
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (constraints.maxWidth >= 700)
+            Row(
+              children: [
+                Expanded(child: petrolCard),
+                const SizedBox(width: 16),
+                Expanded(child: dieselCard),
+              ],
+            )
+          else
+            Column(
+              children: [
+                petrolCard,
+                const SizedBox(height: 16),
+                dieselCard,
+              ],
             ),
-    );
-  }
-}
 
-class _ExpectedRecordedSupply extends StatelessWidget {
-  const _ExpectedRecordedSupply({
-    required this.expectedByProduct,
-    required this.regionalReceipts,
-    required this.formatLitres,
-  });
+          const SizedBox(height: 24),
 
-  final Map<String, double> expectedByProduct;
-  final List<Map<String, dynamic>> regionalReceipts;
-  final String Function(double) formatLitres;
+          const Divider(),
 
-  double _number(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
-  }
+          const SizedBox(height: 16),
 
-  String _text(dynamic value) {
-    return value?.toString().trim().toUpperCase() ?? '';
-  }
-
-  double _recorded(String product) {
-    return regionalReceipts
-        .where((row) => _text(row['product']) == product)
-        .fold(0, (sum, row) => sum + _number(row['total_received_litres']));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final petrolRecorded = _recorded('PETROL');
-    final dieselRecorded = _recorded('DIESEL');
-
-    return Column(
-      children: [
-        _SupplyComparisonRow(
-          product: 'Petrol',
-          expected: expectedByProduct['PETROL'] ?? 0,
-          recorded: petrolRecorded,
-          formatLitres: formatLitres,
-        ),
-        const Divider(height: 28),
-        _SupplyComparisonRow(
-          product: 'Diesel',
-          expected: expectedByProduct['DIESEL'] ?? 0,
-          recorded: dieselRecorded,
-          formatLitres: formatLitres,
-        ),
-      ],
-    );
-  }
-}
-
-class _SupplyComparisonRow extends StatelessWidget {
-  const _SupplyComparisonRow({
-    required this.product,
-    required this.expected,
-    required this.recorded,
-    required this.formatLitres,
-  });
-
-  final String product;
-  final double expected;
-  final double recorded;
-  final String Function(double) formatLitres;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          flex: 2,
-          child: Text(
-            product,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+          Row(
+            children: [
+              const Icon(
+                Icons.fact_check_outlined,
+                color: Colors.blueGrey,
+                size: 30,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _fmt(_observations.length),
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'Valid stock-count intervals closed in the selected period',
+                      style: TextStyle(color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ),
-        Expanded(
-          flex: 3,
-          child: _Metric(
-            label: 'Expected - selected period',
-            value: formatLitres(expected),
+
+          const SizedBox(height: 20),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: Colors.blueGrey,
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'These figures show stations contributing valid '
+                    'consumption observations, not the percentage of '
+                    'all stations reporting. Intervals spanning multiple '
+                    'days cannot establish exact hourly consumption. '
+                    'Unreported stations and incomplete readings are '
+                    'not treated as zero consumption.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
+        ],
+      );
+    },
+  ),
+),
+          ],
         ),
-        Expanded(
-          flex: 3,
-          child: _Metric(
-            label: 'Recorded receipts - cumulative',
-            value: formatLitres(recorded),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TH extends StatelessWidget {
-  const _TH(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-      ),
-    );
-  }
-}
-
-class _TD extends StatelessWidget {
-  const _TD(this.text, {this.right = false});
-
-  final String text;
-  final bool right;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      child: Text(
-        text.isEmpty ? '-' : text,
-        textAlign: right ? TextAlign.right : TextAlign.left,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11),
-      ),
-    );
+      )),
+    ));
   }
 }

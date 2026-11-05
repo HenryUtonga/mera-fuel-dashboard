@@ -70,6 +70,7 @@ class _OverviewPageState extends State<OverviewPage> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1600),
                 child: _OverviewContent(
+                  onRefresh: _refresh,
                   rows: rows,
                   selectedFilter: _selectedFilter,
                   onFilterSelected: _selectFilter,
@@ -86,11 +87,13 @@ class _OverviewPageState extends State<OverviewPage> {
 class _OverviewContent extends StatelessWidget {
   const _OverviewContent({
     required this.rows,
+    required this.onRefresh,
     required this.selectedFilter,
     required this.onFilterSelected,
   });
 
   final List<Map<String, dynamic>> rows;
+  final VoidCallback onRefresh;
   final OverviewFilter selectedFilter;
   final ValueChanged<OverviewFilter> onFilterSelected;
 
@@ -186,9 +189,7 @@ Text(
         ),
         IconButton(
           tooltip: 'Refresh dashboard',
-          onPressed: () {
-            // Refresh is handled by pull-to-refresh for now.
-          },
+          onPressed: onRefresh,
           icon: const Icon(Icons.refresh),
         ),
       ],
