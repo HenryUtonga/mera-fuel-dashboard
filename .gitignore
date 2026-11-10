@@ -53,3 +53,21 @@ generate_station_updates.ps1
 
 # Local source backups
 *.initial_backup
+
+# Local development backups
+*.bak
+*.backup
+
+# Local editor configuration
+.vscode/
+
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+
+# Supabase CLI generated files
+/supabase/.temp/

@@ -8,6 +8,10 @@ import 'screens/reports_page.dart';
 import 'screens/expected_deliveries_page.dart';
 import 'screens/login_page.dart';
 import 'theme/mera_theme.dart';
+import 'fuel_requests/customer/customer_welcome_page.dart';
+import 'fuel_requests/customer/customer_login_page.dart';
+import 'fuel_requests/customer/once_off_request_page.dart';
+import 'fuel_requests/fuel_requests_review_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -122,6 +126,40 @@ class _MeraFuelDashboardAppState extends State<MeraFuelDashboardApp> {
       title: 'MERA Fuel Control Dashboard',
       debugShowCheckedModeBanner: false,
       theme: MeraTheme.light,
+
+      initialRoute: (() {
+        final path = Uri.base.path;
+        final fragment = Uri.base.fragment;
+
+        if (fragment.startsWith('/container-fuels')) {
+          return fragment;
+        }
+
+        if (path.startsWith('/container-fuels')) {
+          return path;
+        }
+
+        return '/';
+      })(),
+      routes: {
+        '/container-fuels': (context) => CustomerWelcomePage(
+          onRegisteredCustomer: () {
+            Navigator.pushNamed(context, '/container-fuels/login');
+          },
+          onOnceOffCustomer: () {
+            Navigator.pushNamed(context, '/container-fuels/apply');
+          },
+        ),
+        '/container-fuels/login': (context) => CustomerLoginPage(
+          onLogin: (applicant) {
+            // Registered customer dashboard will be connected later.
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Customer login successful.')),
+            );
+          },
+        ),
+        '/container-fuels/apply': (context) => const OnceOffRequestPage(),
+      },
       home: _checkingSession
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : _profile == null
@@ -160,16 +198,23 @@ class _DashboardShellState extends State<DashboardShell> {
       icon: Icons.dashboard_outlined,
       selectedIcon: Icons.dashboard,
     ),
+
     _NavigationItem(
       label: 'Expected Deliveries',
       icon: Icons.local_shipping_outlined,
       selectedIcon: Icons.local_shipping,
     ),
     _NavigationItem(
+      label: 'Fuel Requests',
+      icon: Icons.assignment_outlined,
+      selectedIcon: Icons.assignment,
+    ),
+    _NavigationItem(
       label: 'Fuelling Station Statistics',
       icon: Icons.local_gas_station_outlined,
       selectedIcon: Icons.local_gas_station,
     ),
+
     _NavigationItem(
       label: 'Fueling Activity',
       icon: Icons.ev_station_outlined,
@@ -221,9 +266,7 @@ class _DashboardShellState extends State<DashboardShell> {
       width: 250,
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(
-  right: BorderSide(color: MeraColors.border),
-),
+        border: Border(right: BorderSide(color: MeraColors.border)),
       ),
       child: Column(
         children: [
@@ -504,18 +547,19 @@ class _DashboardShellState extends State<DashboardShell> {
     );
   }
 
-Widget _buildPage() {
-  const pages = [
-    OverviewPage(),
-    ExpectedDeliveriesPage(),
-    StationsPage(),
-    FuelingActivityPage(),
-    AnalyticsPage(),
-    ReportsPage(),
-  ];
+  Widget _buildPage() {
+    const pages = [
+      OverviewPage(),
+      ExpectedDeliveriesPage(),
+      FuelRequestsReviewPage(),
+      StationsPage(),
+      FuelingActivityPage(),
+      AnalyticsPage(),
+      ReportsPage(),
+    ];
 
-  return pages[_selectedIndex];
-}
+    return pages[_selectedIndex];
+  }
 }
 
 class PlaceholderPage extends StatelessWidget {
