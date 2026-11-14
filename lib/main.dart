@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/overview_page.dart';
 import 'screens/stations_page.dart';
 import 'screens/fueling_activity_page.dart';
+import 'fuel_requests/fuel_requests_admin_page.dart';
 import 'screens/analytics_page.dart';
 import 'screens/reports_page.dart';
 import 'screens/expected_deliveries_page.dart';
@@ -12,6 +13,8 @@ import 'fuel_requests/customer/customer_welcome_page.dart';
 import 'fuel_requests/customer/customer_login_page.dart';
 import 'fuel_requests/customer/once_off_request_page.dart';
 import 'fuel_requests/fuel_requests_review_page.dart';
+import 'fuel_requests/customer/customer_dashboard_page.dart';
+import 'fuel_requests/station_confirmation_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -127,12 +130,20 @@ class _MeraFuelDashboardAppState extends State<MeraFuelDashboardApp> {
       debugShowCheckedModeBanner: false,
       theme: MeraTheme.light,
 
+
       initialRoute: (() {
         final path = Uri.base.path;
         final fragment = Uri.base.fragment;
 
+        // Station-owner confirmation page
+        if (fragment.startsWith('/station-confirmation') ||
+            path.startsWith('/station-confirmation')) {
+          return '/station-confirmation';
+        }
+
+        // Customer fuel request portal
         if (fragment.startsWith('/container-fuels')) {
-          return fragment;
+          return fragment.split('?').first;
         }
 
         if (path.startsWith('/container-fuels')) {
@@ -141,7 +152,23 @@ class _MeraFuelDashboardAppState extends State<MeraFuelDashboardApp> {
 
         return '/';
       })(),
+
+      onGenerateRoute: (settings) {
+        final routeName = settings.name ?? '';
+
+        if (routeName.startsWith('/station-confirmation')) {
+          return MaterialPageRoute(
+            settings: settings,
+            builder: (context) => const StationConfirmationPage(),
+          );
+        }
+
+        return null;
+      },
+
       routes: {
+         '/station-confirmation': (context) =>
+    const StationConfirmationPage(),
         '/container-fuels': (context) => CustomerWelcomePage(
           onRegisteredCustomer: () {
             Navigator.pushNamed(context, '/container-fuels/login');
@@ -150,21 +177,34 @@ class _MeraFuelDashboardAppState extends State<MeraFuelDashboardApp> {
             Navigator.pushNamed(context, '/container-fuels/apply');
           },
         ),
+
         '/container-fuels/login': (context) => CustomerLoginPage(
           onLogin: (applicant) {
-            // Registered customer dashboard will be connected later.
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Customer login successful.')),
+            Navigator.pushNamedAndRemoveUntil(
+              context,
+              '/container-fuels/dashboard',
+              (route) => false,
             );
           },
         ),
-        '/container-fuels/apply': (context) => const OnceOffRequestPage(),
+        '/container-fuels/dashboard': (context) =>
+            const CustomerDashboardPage(),
+
+         '/container-fuels/apply': (context) => const OnceOffRequestPage(),
       },
+
       home: _checkingSession
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          ? const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            )
           : _profile == null
-          ? LoginPage(onLogin: _handleLogin)
-          : DashboardShell(staffProfile: _profile!, onLogout: _logout),
+              ? LoginPage(onLogin: _handleLogin)
+              : DashboardShell(
+                  staffProfile: _profile!,
+                  onLogout: _logout,
+                ),
     );
   }
 }
@@ -205,9 +245,15 @@ class _DashboardShellState extends State<DashboardShell> {
       selectedIcon: Icons.local_shipping,
     ),
     _NavigationItem(
-      label: 'Fuel Requests',
+      label: 'Fuel Request Approvals',
       icon: Icons.assignment_outlined,
       selectedIcon: Icons.assignment,
+    ),
+
+    _NavigationItem(
+      label: 'Fuel Requests Administration',
+      icon: Icons.admin_panel_settings_outlined,
+      selectedIcon: Icons.admin_panel_settings,
     ),
     _NavigationItem(
       label: 'Fuelling Station Statistics',
@@ -547,19 +593,20 @@ class _DashboardShellState extends State<DashboardShell> {
     );
   }
 
-  Widget _buildPage() {
-    const pages = [
-      OverviewPage(),
-      ExpectedDeliveriesPage(),
-      FuelRequestsReviewPage(),
-      StationsPage(),
-      FuelingActivityPage(),
-      AnalyticsPage(),
-      ReportsPage(),
-    ];
+Widget _buildPage() {
+  const pages = [
+    OverviewPage(),
+    ExpectedDeliveriesPage(),
+    FuelRequestsReviewPage(),
+    FuelRequestsAdminPage(),
+    StationsPage(),
+    FuelingActivityPage(),
+    AnalyticsPage(),
+    ReportsPage(),
+  ];
 
-    return pages[_selectedIndex];
-  }
+  return pages[_selectedIndex];
+}
 }
 
 class PlaceholderPage extends StatelessWidget {

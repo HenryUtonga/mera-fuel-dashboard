@@ -413,12 +413,24 @@ class _OnceOffRequestPageState extends State<OnceOffRequestPage> {
       }
       if (!mounted) return;
       setState(() => _submittedReference = reference);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Request submitted: $reference'),
-          backgroundColor: Colors.green,
+      await _showSubmissionConfirmation(
+        reference: reference,
+        applicant: payload['applicant_name'] as String,
+        email: payload['email'] as String,
+        phone: payload['phone_number'] as String,
+        district: _selectedName(_districts, _selectedDistrictId, 'id', 'name'),
+        omc: _selectedName(_omcs, _selectedOmcId, 'id', 'name'),
+        station: _selectedName(
+          _stations,
+          _selectedStationId,
+          'station_id',
+          'station_name',
         ),
+        reason: payload['reason'] as String,
+        items: items,
       );
+      if (!mounted) return;
+      _resetAfterSuccessfulSubmission();
     } catch (error) {
       if (!mounted) return;
       _showError(
@@ -427,6 +439,131 @@ class _OnceOffRequestPageState extends State<OnceOffRequestPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String _selectedName(
+    List<Map<String, dynamic>> options,
+    String? id,
+    String idKey,
+    String nameKey,
+  ) {
+    for (final option in options) {
+      if (option[idKey]?.toString() == id) {
+        return option[nameKey]?.toString() ?? 'Not specified';
+      }
+    }
+    return 'Not specified';
+  }
+
+  String _quantityLabel(double quantity) =>
+      quantity.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+
+  Future<void> _showSubmissionConfirmation({
+    required String reference,
+    required String applicant,
+    required String email,
+    required String phone,
+    required String district,
+    required String omc,
+    required String station,
+    required String reason,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green),
+              SizedBox(width: 10),
+              Expanded(child: Text('Request submitted successfully')),
+            ],
+          ),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Your MERA reference number:'),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    reference,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: MeraColors.darkGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Submitted request details',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Applicant: $applicant'),
+                  Text('Email: $email'),
+                  Text('Phone: $phone'),
+                  Text('District: $district'),
+                  Text('OMC: $omc'),
+                  Text('Filling station: $station'),
+                  const SizedBox(height: 8),
+                  for (final item in items)
+                    Text(
+                      '${item['product']}: ${_quantityLabel((item['litres'] as num).toDouble())} L',
+                    ),
+                  const SizedBox(height: 8),
+                  Text('Reason: $reason'),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Keep this reference for follow-up. Submission does not '
+                    'mean approval; MERA will review your request.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _resetAfterSuccessfulSubmission() {
+    // Reset the form only after the applicant acknowledges the reference.
+    _formKey.currentState?.reset();
+    for (final controller in [
+      _nameController,
+      _phoneController,
+      _emailController,
+      _reasonController,
+      _petrolLitresController,
+      _dieselLitresController,
+    ]) {
+      controller.clear();
+    }
+    setState(() {
+      _selectedDistrictId = null;
+      _selectedOmcId = null;
+      _selectedStationId = null;
+      _omcs = [];
+      _stations = [];
+      _locationError = null;
+      _identificationDocument = null;
+      _proofOfNeedDocument = null;
+      _companyRegistrationDocument = null;
+      _submissionId = null;
+      _submittedReference = null;
+    });
   }
 
   void _showError(String message) {
@@ -796,63 +933,32 @@ class _OnceOffRequestPageState extends State<OnceOffRequestPage> {
 
                         const SizedBox(height: 24),
                         const SizedBox(height: 10),
-                        if (_submittedReference != null) ...[
-                          const Icon(
-                            Icons.check_circle,
-                            color: Colors.green,
-                            size: 44,
+                        FilledButton(
+                          onPressed: _submitting ? null : _submitRequest,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: MeraColors.green,
                           ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'Request submitted successfully',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          SelectableText(
-                            'MERA Reference: $_submittedReference',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Please keep this reference number. Your request is awaiting MERA review.',
-                            textAlign: TextAlign.center,
-                          ),
-                        ] else
-                          FilledButton(
-                            onPressed: _submitting ? null : _submitRequest,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: MeraColors.green,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              child: _submitting
-                                  ? const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: _submitting
+                                ? const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
                                         ),
-                                        SizedBox(width: 12),
-                                        Text('SUBMITTING REQUEST...'),
-                                      ],
-                                    )
-                                  : const Text('SUBMIT REQUEST'),
-                            ),
+                                      ),
+                                      SizedBox(width: 12),
+                                      Text('SUBMITTING REQUEST...'),
+                                    ],
+                                  )
+                                : const Text('SUBMIT REQUEST'),
                           ),
+                        ),
                       ],
                     ),
                   ),

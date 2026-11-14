@@ -71,3 +71,14 @@ generate_station_updates.ps1
 
 # Supabase CLI generated files
 /supabase/.temp/
+
+# Node.js and Deno local dependencies
+node_modules/
+**/node_modules/
+
+# Temporary development folders
+/rate_limit_backup/
+/rate_limit_patch/
+
+# Local dashboard backup
+/lib/fuel_requests/customer/customer_dashboard_page_backup.dart.txt

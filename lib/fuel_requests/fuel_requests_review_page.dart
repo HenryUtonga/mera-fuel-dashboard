@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FuelRequestsReviewPage extends StatefulWidget {
   const FuelRequestsReviewPage({super.key});
@@ -14,7 +14,7 @@ class _FuelRequestsReviewPageState extends State<FuelRequestsReviewPage> {
   List<Map<String, dynamic>> _requests = [];
   bool _loading = true;
   String? _error;
-  String _filter = 'ALL';
+  String _filter = 'PENDING_MERA_APPROVAL';
 
   @override
   void initState() {
@@ -58,7 +58,7 @@ class _FuelRequestsReviewPageState extends State<FuelRequestsReviewPage> {
               children: [
                 const Expanded(
                   child: Text(
-                    'Fuel Requests',
+                    'Fuel Request Approvals',
                     style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -69,24 +69,25 @@ class _FuelRequestsReviewPageState extends State<FuelRequestsReviewPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
-                for (final f in [
-                  'ALL',
+                for (final filter in const [
                   'PENDING_MERA_APPROVAL',
                   'APPROVED',
                   'REJECTED',
+                  'ALL',
                 ])
                   ChoiceChip(
-                    label: Text(f == 'ALL' ? 'All' : f.replaceAll('_', ' ')),
-                    selected: _filter == f,
-                    onSelected: (_) => setState(() => _filter = f),
+                    label: Text(_statusLabel(filter)),
+                    selected: _filter == filter,
+                    onSelected: (_) => setState(() => _filter = filter),
                   ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -99,36 +100,123 @@ class _FuelRequestsReviewPageState extends State<FuelRequestsReviewPage> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : visible.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
-                        'No requests available for this filter or your permissions.',
+                        _filter == 'PENDING_MERA_APPROVAL'
+                            ? 'No requests currently pending MERA approval.'
+                            : 'No requests available for this filter or your permissions.',
                       ),
                     )
                   : ListView.separated(
                       itemCount: visible.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 8),
-                      itemBuilder: (context, i) {
-                        final r = visible[i];
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final request = visible[index];
+                        final status = (request['status'] ?? '').toString();
+                        final applicant =
+                            (request['applicant_name'] ?? 'Unknown applicant')
+                                .toString();
+                        final type = (request['applicant_type'] ?? '')
+                            .toString();
+                        final email = (request['email'] ?? '').toString();
                         return Card(
-                          child: ListTile(
-                            title: Text(
-                              '${r['request_number'] ?? ''}  •  ${r['applicant_name'] ?? ''}',
-                            ),
-                            subtitle: Text(
-                              '${r['status'] ?? ''}  •  ${r['applicant_type'] ?? ''}\n${r['created_at'] ?? ''}',
-                            ),
-                            isThreeLine: true,
-                            trailing: const Icon(Icons.chevron_right),
+                          margin: EdgeInsets.zero,
+                          elevation: 0,
+                          color: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: Colors.grey.shade200),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
                             onTap: () async {
                               await Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (_) =>
-                                      _RequestReviewDetails(request: r),
+                                      _RequestReviewDetails(request: request),
                                 ),
                               );
                               if (mounted) _load();
                             },
+                            child: Padding(
+                              padding: const EdgeInsets.all(18),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Wrap(
+                                    spacing: 12,
+                                    runSpacing: 8,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Text(
+                                        (request['request_number'] ??
+                                                'No reference')
+                                            .toString(),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          color: Color(0xFF176B42),
+                                        ),
+                                      ),
+                                      _RequestStatusBadge(status: status),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    applicant,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (email.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      email,
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 14),
+                                  Wrap(
+                                    spacing: 24,
+                                    runSpacing: 8,
+                                    children: [
+                                      _RequestMeta(
+                                        icon: Icons.person_outline,
+                                        text: _applicantTypeLabel(type),
+                                      ),
+                                      _RequestMeta(
+                                        icon: Icons.schedule_outlined,
+                                        text: _malawiDate(
+                                          request['created_at'],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Divider(height: 28),
+                                  const Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        'View request',
+                                        style: TextStyle(
+                                          color: Color(0xFF176B42),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      SizedBox(width: 4),
+                                      Icon(
+                                        Icons.chevron_right,
+                                        color: Color(0xFF176B42),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         );
                       },
@@ -139,6 +227,157 @@ class _FuelRequestsReviewPageState extends State<FuelRequestsReviewPage> {
       ),
     );
   }
+}
+
+String _statusLabel(String status) {
+  switch (status) {
+    case 'PENDING_MERA_APPROVAL':
+      return 'Pending MERA Approval';
+    case 'APPROVED':
+      return 'Approved';
+    case 'REJECTED':
+      return 'Rejected';
+    case 'ALL':
+      return 'All';
+    default:
+      return status.replaceAll('_', ' ');
+  }
+}
+
+String _applicantTypeLabel(String type) {
+  if (type == 'ONCE_OFF') return 'Once-off applicant';
+  if (type == 'REGISTERED') return 'Registered customer';
+  return type.replaceAll('_', ' ');
+}
+
+String _malawiDate(dynamic value) {
+  final parsed = DateTime.tryParse(value?.toString() ?? '');
+  if (parsed == null) return 'Date unavailable';
+  final local = parsed.toUtc().add(const Duration(hours: 2));
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(local.day)}/${two(local.month)}/${local.year} '
+      '${two(local.hour)}:${two(local.minute)} CAT';
+}
+
+class _RequestStatusBadge extends StatelessWidget {
+  const _RequestStatusBadge({required this.status});
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final Color background;
+    switch (status) {
+      case 'APPROVED':
+        color = Colors.green.shade800;
+        background = Colors.green.shade50;
+        break;
+      case 'REJECTED':
+        color = Colors.red.shade800;
+        background = Colors.red.shade50;
+        break;
+      default:
+        color = Colors.orange.shade900;
+        background = Colors.orange.shade50;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        _statusLabel(status),
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _RequestMeta extends StatelessWidget {
+  const _RequestMeta({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 17, color: Colors.grey.shade600),
+      const SizedBox(width: 6),
+      Text(text),
+    ],
+  );
+}
+
+class _RequestSection extends StatelessWidget {
+  const _RequestSection({
+    required this.title,
+    required this.icon,
+    required this.child,
+  });
+  final String title;
+  final IconData icon;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Card(
+    elevation: 0,
+    color: Colors.white,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(14),
+      side: BorderSide(color: Colors.grey.shade200),
+    ),
+    margin: const EdgeInsets.only(bottom: 16),
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: const Color(0xFF176B42)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          child,
+        ],
+      ),
+    ),
+  );
+}
+
+class _RequestField extends StatelessWidget {
+  const _RequestField({required this.label, required this.value});
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          value.isEmpty ? 'Not provided' : value,
+          style: const TextStyle(fontWeight: FontWeight.w500),
+        ),
+      ],
+    ),
+  );
 }
 
 class _RequestReviewDetails extends StatefulWidget {
@@ -355,12 +594,92 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
     }
   }
 
+  Future<void> _reject() async {
+    final reasonController = TextEditingController();
+
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reject fuel request'),
+        content: TextField(
+          controller: reasonController,
+          autofocus: true,
+          maxLines: 4,
+          maxLength: 1000,
+          decoration: const InputDecoration(
+            labelText: 'Reason for rejection',
+            hintText: 'Explain why this request is being rejected',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = reasonController.text.trim();
+              if (value.length < 5) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content: Text('Enter a reason of at least 5 characters.'),
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(ctx, value);
+            },
+            child: const Text('Confirm rejection'),
+          ),
+        ],
+      ),
+    );
+
+    reasonController.dispose();
+
+    if (reason == null || !mounted) return;
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    try {
+      await _client.rpc(
+        'reject_fuel_request',
+        params: {
+          'p_request_id': widget.request['id'].toString(),
+          'p_rejection_reason': reason,
+        },
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fuel request rejected successfully.')),
+      );
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Rejection failed: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = widget.request;
     final canApprove =
         r['can_approve'] == true && r['status'] == 'PENDING_MERA_APPROVAL';
+    final status = (r['status'] ?? '').toString();
     return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F6),
       appBar: AppBar(
         title: Text(r['request_number']?.toString() ?? 'Fuel request'),
       ),
@@ -369,180 +688,298 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                Text(
-                  r['applicant_name']?.toString() ?? '',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                for (final key in [
-                  'status',
-                  'applicant_type',
-                  'email',
-                  'phone_number',
-                  'request_reason',
-                ])
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Text(
-                      '${key.replaceAll('_', ' ').toUpperCase()}: ${r[key] ?? '—'}',
-                    ),
-                  ),
-                const Divider(height: 32),
-                Text(
-                  'Fuel products and allocations',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                if (_error != null)
-                  SelectableText(
-                    _error!,
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                for (final item in _items)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1000),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
-                            '${item['product']} — requested ${item['requested_litres']} L',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                            (r['applicant_name'] ?? 'Unknown applicant')
+                                .toString(),
+                            style: Theme.of(context).textTheme.headlineSmall,
                           ),
-                          const SizedBox(height: 12),
-                          if (canApprove) ...[
-                            TextField(
-                              controller: _litres[item['id'].toString()],
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              decoration: const InputDecoration(
-                                labelText: 'Approved litres',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<String>(
-                              initialValue: _stations[item['id'].toString()],
-                              isExpanded: true,
-                              decoration: const InputDecoration(
-                                labelText: 'Allocate to station',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: _eligibleStations
-                                  .map(
-                                    (s) => DropdownMenuItem<String>(
-                                      value: s['station_id'].toString(),
-                                      child: Text(
-                                        '${s['station_name']} (${s['omc_name']})',
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) => setState(
-                                () => _stations[item['id'].toString()] = value,
-                              ),
-                            ),
-                          ] else
-                            Text(
-                              'Approved: ${item['approved_litres'] ?? 'Pending'} L',
-                            ),
+                          _RequestStatusBadge(status: status),
                         ],
                       ),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                Text(
-                  'Supporting documents',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                if (_documents.isEmpty)
-                  const Text(
-                    'No supporting documents available. Approval is blocked.',
-                  ),
-                for (final document in _documents)
-                  Card(
-                    child: ListTile(
-                      leading: Icon(
-                        _openedDocumentIds.contains(document['id'].toString())
-                            ? Icons.check_circle_outline
-                            : Icons.description_outlined,
-                      ),
-                      title: Text(
-                        document['document_type'].toString().replaceAll(
-                          '_',
-                          ' ',
+                      const SizedBox(height: 18),
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: SelectableText(
+                            _error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      _RequestSection(
+                        title: 'Applicant information',
+                        icon: Icons.person_outline,
+                        child: Wrap(
+                          spacing: 32,
+                          runSpacing: 4,
+                          children: [
+                            SizedBox(
+                              width: 260,
+                              child: _RequestField(
+                                label: 'Applicant type',
+                                value: _applicantTypeLabel(
+                                  (r['applicant_type'] ?? '').toString(),
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 260,
+                              child: _RequestField(
+                                label: 'Email',
+                                value: (r['email'] ?? '').toString(),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 260,
+                              child: _RequestField(
+                                label: 'Phone number',
+                                value: (r['phone_number'] ?? '').toString(),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 260,
+                              child: _RequestField(
+                                label: 'Submitted (Malawi time)',
+                                value: _malawiDate(r['created_at']),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 600,
+                              child: _RequestField(
+                                label: 'Reason for request',
+                                value: (r['request_reason'] ?? '').toString(),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      subtitle: Text(
-                        document['file_name']?.toString() ?? 'Document',
+                      _RequestSection(
+                        title: 'Fuel products and allocations',
+                        icon: Icons.local_gas_station_outlined,
+                        child: _items.isEmpty
+                            ? const Text('No fuel products available.')
+                            : Column(
+                                children: [
+                                  for (final item in _items)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 16,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${item['product']} - Requested: '
+                                            '${item['requested_litres']} L',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          if (canApprove) ...[
+                                            TextField(
+                                              controller:
+                                                  _litres[item['id']
+                                                      .toString()],
+                                              keyboardType:
+                                                  const TextInputType.numberWithOptions(
+                                                    decimal: true,
+                                                  ),
+                                              decoration: const InputDecoration(
+                                                labelText: 'Approved litres',
+                                                border: OutlineInputBorder(),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 12),
+                                            DropdownButtonFormField<String>(
+                                              initialValue:
+                                                  _stations[item['id']
+                                                      .toString()],
+                                              isExpanded: true,
+                                              decoration: const InputDecoration(
+                                                labelText:
+                                                    'Allocate to station',
+                                                border: OutlineInputBorder(),
+                                              ),
+                                              items: _eligibleStations
+                                                  .map(
+                                                    (
+                                                      station,
+                                                    ) => DropdownMenuItem<String>(
+                                                      value:
+                                                          station['station_id']
+                                                              .toString(),
+                                                      child: Text(
+                                                        '${station['station_name']} (${station['omc_name']})',
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                    ),
+                                                  )
+                                                  .toList(),
+                                              onChanged: (value) => setState(
+                                                () =>
+                                                    _stations[item['id']
+                                                            .toString()] =
+                                                        value,
+                                              ),
+                                            ),
+                                          ] else
+                                            Text(
+                                              'Approved: ${item['approved_litres'] ?? 'Pending'} L',
+                                            ),
+                                          const Divider(height: 20),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
                       ),
-                      trailing: _openingDocumentId == document['id'].toString()
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.open_in_new),
-                      onTap: _openingDocumentId == null
-                          ? () => _openDocument(document)
-                          : null,
-                    ),
+                      _RequestSection(
+                        title: 'Supporting documents',
+                        icon: Icons.description_outlined,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (_documents.isEmpty)
+                              const Text(
+                                'No supporting documents available. Approval is blocked.',
+                              ),
+                            for (final document in _documents)
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: Icon(
+                                  _openedDocumentIds.contains(
+                                        document['id'].toString(),
+                                      )
+                                      ? Icons.check_circle_outline
+                                      : Icons.description_outlined,
+                                ),
+                                title: Text(
+                                  document['document_type']
+                                      .toString()
+                                      .replaceAll('_', ' '),
+                                ),
+                                subtitle: Text(
+                                  document['file_name']?.toString() ??
+                                      'Document',
+                                ),
+                                trailing:
+                                    _openingDocumentId ==
+                                        document['id'].toString()
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.open_in_new),
+                                onTap: _openingDocumentId == null
+                                    ? () => _openDocument(document)
+                                    : null,
+                              ),
+                            if (canApprove && !_allDocumentsOpened)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text(
+                                  'Open every uploaded document before confirming '
+                                  'verification. Identification and proof of need are required.',
+                                  style: TextStyle(color: Colors.deepOrange),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (canApprove)
+                        _RequestSection(
+                          title: 'Review and decision',
+                          icon: Icons.fact_check_outlined,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TextField(
+                                controller: _notes,
+                                maxLines: 3,
+                                decoration: const InputDecoration(
+                                  labelText: 'Review notes (optional)',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: _documentsVerified,
+                                onChanged: _allDocumentsOpened
+                                    ? (value) => setState(
+                                        () =>
+                                            _documentsVerified = value ?? false,
+                                      )
+                                    : null,
+                                title: const Text(
+                                  'I have independently verified the supporting documents',
+                                ),
+                                subtitle: const Text(
+                                  'Confirm only after checking the contents '
+                                  'and authenticity of every supporting document.',
+                                ),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  FilledButton.icon(
+                                    onPressed:
+                                        _saving ||
+                                            !_documentsVerified ||
+                                            !_allDocumentsOpened ||
+                                            _eligibleStations.isEmpty ||
+                                            _items.isEmpty
+                                        ? null
+                                        : _approve,
+                                    icon: const Icon(
+                                      Icons.check_circle_outline,
+                                    ),
+                                    label: Text(
+                                      _saving
+                                          ? 'Approving...'
+                                          : 'Approve request',
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: _saving ? null : _reject,
+                                    icon: const Icon(Icons.cancel_outlined),
+                                    label: const Text('Reject request'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Approval requires document verification. '
+                                'Rejection requires a reason.',
+                                style: TextStyle(color: Colors.deepOrange),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
-                if (canApprove && !_allDocumentsOpened)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      'Open every uploaded document before confirming verification. Identification and proof of need are required.',
-                      style: TextStyle(color: Colors.deepOrange),
-                    ),
-                  ),
-                if (canApprove) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _notes,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Review notes (optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  CheckboxListTile(
-                    value: _documentsVerified,
-                    onChanged: _allDocumentsOpened
-                        ? (value) => setState(
-                            () => _documentsVerified = value ?? false,
-                          )
-                        : null,
-                    title: const Text(
-                      'I have independently verified the supporting documents',
-                    ),
-                    subtitle: const Text(
-                      'Confirm only after checking the contents and authenticity of every supporting document.',
-                    ),
-                    controlAffinity: ListTileControlAffinity.leading,
-                  ),
-                  FilledButton.icon(
-                    onPressed:
-                        _saving ||
-                            !_documentsVerified ||
-                            !_allDocumentsOpened ||
-                            _eligibleStations.isEmpty ||
-                            _items.isEmpty
-                        ? null
-                        : _approve,
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: Text(_saving ? 'Approving…' : 'Approve request'),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                const Text(
-                  'Rejection and permanent document-verification records are not implemented yet. Only approve after independent verification.',
-                  style: TextStyle(color: Colors.deepOrange),
                 ),
               ],
             ),
