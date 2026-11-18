@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'screens/container_fuel_monitoring_page.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/overview_page.dart';
 import 'screens/stations_page.dart';
@@ -245,15 +246,19 @@ class _DashboardShellState extends State<DashboardShell> {
       selectedIcon: Icons.local_shipping,
     ),
     _NavigationItem(
-      label: 'Fuel Request Approvals',
-      icon: Icons.assignment_outlined,
-      selectedIcon: Icons.assignment,
-    ),
-
-    _NavigationItem(
       label: 'Fuel Requests Administration',
       icon: Icons.admin_panel_settings_outlined,
       selectedIcon: Icons.admin_panel_settings,
+    ),
+    _NavigationItem(
+      label: 'Container Fuel Monitoring',
+      icon: Icons.monitor_heart_outlined,
+      selectedIcon: Icons.monitor_heart,
+    ),
+    _NavigationItem(
+      label: 'Fuel Request Approvals',
+      icon: Icons.assignment_outlined,
+      selectedIcon: Icons.assignment,
     ),
     _NavigationItem(
       label: 'Fuelling Station Statistics',
@@ -597,8 +602,9 @@ Widget _buildPage() {
   const pages = [
     OverviewPage(),
     ExpectedDeliveriesPage(),
-    FuelRequestsReviewPage(),
     FuelRequestsAdminPage(),
+    ContainerFuelMonitoringPage(),
+    FuelRequestsReviewPage(),
     StationsPage(),
     FuelingActivityPage(),
     AnalyticsPage(),
@@ -646,3 +652,5 @@ class _NavigationItem {
   final IconData icon;
   final IconData selectedIcon;
 }
+
+
