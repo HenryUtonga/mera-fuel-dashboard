@@ -227,6 +227,41 @@ class DashboardShell extends StatefulWidget {
 class _DashboardShellState extends State<DashboardShell> {
   int _selectedIndex = 0;
 
+  bool _canAccessFuelApprovals = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFuelApprovalPermission();
+  }
+
+  Future<void> _checkFuelApprovalPermission() async {
+    bool allowed = false;
+
+    try {
+      final result = await Supabase.instance.client.rpc(
+        'has_fuel_request_permission',
+        params: {
+          'p_permission': 'FUEL_REQUEST_APPROVER',
+        },
+      );
+
+      allowed = result == true;
+    } catch (error) {
+      debugPrint('Fuel approval permission check failed: $error');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _canAccessFuelApprovals = allowed;
+
+      if (!allowed && _selectedIndex == 4) {
+        _selectedIndex = 0;
+      }
+    });
+  }
+
   String get _fullName =>
       widget.staffProfile['full_name']?.toString().trim() ?? 'Dashboard User';
 
@@ -366,9 +401,14 @@ class _DashboardShellState extends State<DashboardShell> {
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               itemCount: _navigationItems.length,
-              itemBuilder: (context, index) {
-                final item = _navigationItems[index];
-                final selected = index == _selectedIndex;
+itemBuilder: (context, index) {
+  // Hide Fuel Request Approvals unless explicitly authorized.
+  if (index == 4 && !_canAccessFuelApprovals) {
+    return const SizedBox.shrink();
+  }
+
+  final item = _navigationItems[index];
+  final selected = index == _selectedIndex;
 
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
@@ -516,9 +556,14 @@ class _DashboardShellState extends State<DashboardShell> {
               child: ListView.builder(
                 padding: const EdgeInsets.all(10),
                 itemCount: _navigationItems.length,
-                itemBuilder: (context, index) {
-                  final item = _navigationItems[index];
-                  final selected = index == _selectedIndex;
+itemBuilder: (context, index) {
+  // Hide Fuel Request Approvals unless explicitly authorized.
+  if (index == 4 && !_canAccessFuelApprovals) {
+    return const SizedBox.shrink();
+  }
+
+  final item = _navigationItems[index];
+  final selected = index == _selectedIndex;
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 4),
@@ -599,6 +644,11 @@ class _DashboardShellState extends State<DashboardShell> {
   }
 
 Widget _buildPage() {
+  // Prevent unauthorized access to Fuel Request Approvals.
+  if (_selectedIndex == 4 && !_canAccessFuelApprovals) {
+    return const OverviewPage();
+  }
+
   const pages = [
     OverviewPage(),
     ExpectedDeliveriesPage(),
