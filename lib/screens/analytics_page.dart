@@ -203,6 +203,91 @@ setState(() {
     Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.circle, color: _diesel, size: 11), SizedBox(width: 6), Text('Diesel')]),
   ]);
 
+  // Delivery trend uses the existing FULL JOIN variance view. Dates are
+  // already Malawi calendar dates; do not apply a second UTC conversion.
+  Widget _deliveryTrend(String field, String dateDescription) {
+    final byDay = <DateTime, Map<String, double>>{};
+    final reported = <DateTime, Set<String>>{};
+    for (final row in _periodDeliveries) {
+      final date = _dateOnly(row['delivery_date']);
+      final product = _text(row['product']).toUpperCase();
+      if (date == null || (product != 'PETROL' && product != 'DIESEL')) continue;
+      final key = DateTime.utc(date.year, date.month, date.day);
+      final countField = field == 'expected_litres' ? 'expected_count' : 'receipt_count';
+      if (_num(row[countField]) <= 0) continue;
+      final values = byDay.putIfAbsent(key, () => {'PETROL': 0, 'DIESEL': 0});
+      values[product] = (values[product] ?? 0) + _num(row[field]);
+      reported.putIfAbsent(key, () => <String>{}).add(product);
+    }
+    if (reported.isEmpty) {
+      return SizedBox(height: 150, child: Center(
+        child: Text('No $dateDescription recorded in this period.'),
+      ));
+    }
+    final dates = <DateTime>[];
+    for (var d = _start; !d.isAfter(_end); d = d.add(const Duration(days: 1))) {
+      dates.add(d);
+    }
+    final petrol = <FlSpot>[];
+    final diesel = <FlSpot>[];
+    var maxY = 0.0;
+    for (var i = 0; i < dates.length; i++) {
+      final date = dates[i];
+      for (final product in ['PETROL', 'DIESEL']) {
+        final points = product == 'PETROL' ? petrol : diesel;
+        if (!(reported[date]?.contains(product) ?? false)) {
+          points.add(FlSpot.nullSpot);
+          continue;
+        }
+        final value = byDay[date]?[product] ?? 0.0;
+        maxY = math.max(maxY, value);
+        points.add(FlSpot(i.toDouble(), value));
+      }
+    }
+    return Column(children: [
+      _legend(),
+      const SizedBox(height: 14),
+      SizedBox(height: 290, child: LineChart(LineChartData(
+        minY: 0,
+        maxY: math.max(1.0, maxY * 1.15),
+        gridData: const FlGridData(drawVerticalLine: false),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 65)),
+          bottomTitles: AxisTitles(sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 28,
+            interval: dates.length > 30 ? 10 : dates.length > 10 ? 5 : 1,
+            getTitlesWidget: (value, _) {
+              final i = value.toInt();
+              if (i < 0 || i >= dates.length || value != i.toDouble()) {
+                return const SizedBox.shrink();
+              }
+              return Text(_day(dates[i]), style: const TextStyle(fontSize: 10));
+            },
+          )),
+        ),
+        lineBarsData: [
+          LineChartBarData(spots: petrol, color: _petrol, barWidth: 3,
+            isCurved: false, dotData: FlDotData(show: dates.length <= 14)),
+          LineChartBarData(spots: diesel, color: _diesel, barWidth: 3,
+            isCurved: false, dotData: FlDotData(show: dates.length <= 14)),
+        ],
+        lineTouchData: LineTouchData(touchTooltipData: LineTouchTooltipData(
+          getTooltipItems: (spots) => spots.map((spot) => LineTooltipItem(
+            '${spot.barIndex == 0 ? 'Petrol' : 'Diesel'}: ${_fmt(spot.y)} L\n${_day(dates[spot.x.toInt()])}',
+            const TextStyle(color: Colors.white),
+          )).toList(),
+        )),
+      ))),
+      const SizedBox(height: 10),
+      Text('Gaps indicate no recorded $dateDescription for that product/day; they are not confirmed zero deliveries.',
+        style: const TextStyle(fontSize: 12, color: Colors.black54)),
+    ]);
+  }
+
   Widget _trend() {
     final entries = _observedByClosingDay.entries.toList();
     if (_observations.isEmpty) return const SizedBox(height: 150, child: Center(child: Text('No completed stock-count intervals in this period.')));
@@ -1327,6 +1412,14 @@ Widget _control() {
               }).where((s) => s.isNotEmpty).toSet().length), 'Unique in selected period'),
             ]),
             const SizedBox(height: 20),
+             _panel('Expected Fuel Deliveries Trend',
+               'Scheduled delivery litres by Malawi calendar date, based on OMC expected-delivery submissions.',
+               _deliveryTrend('expected_litres', 'expected deliveries')),
+             const SizedBox(height: 20),
+             _panel('Actual Fuel Deliveries Trend',
+               'Recorded fuel receipts by Malawi calendar date; recorded date may differ from physical arrival date.',
+               _deliveryTrend('actual_litres', 'actual receipts')),
+             const SizedBox(height: 20),
             _panel('Observed Fuel Consumption',
               'Litres calculated from consecutive physical stock counts and intervening receipts. '
               'Each interval is plotted on its closing-reading date, NOT as exact daily use.', _trend()),
