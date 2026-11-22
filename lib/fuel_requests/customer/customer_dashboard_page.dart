@@ -20,6 +20,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   final _reasonController = TextEditingController();
   final _petrolController = TextEditingController();
   final _dieselController = TextEditingController();
+  final _allowanceJustificationController = TextEditingController();
 
   Map<String, dynamic>? _profile;
   List<Map<String, dynamic>> _requests = [];
@@ -51,6 +52,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     _reasonController.dispose();
     _petrolController.dispose();
     _dieselController.dispose();
+    _allowanceJustificationController.dispose();
     super.dispose();
   }
 
@@ -165,6 +167,113 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
   double _litres(String value) => double.tryParse(value.trim()) ?? 0;
 
+  Future<List<Map<String, dynamic>>> _previewAllowances(
+    List<Map<String, dynamic>> items,
+  ) async {
+    final response = await _supabase.rpc(
+      'preview_my_fuel_allowances',
+      params: {'p_items': items},
+    );
+
+    return List<Map<String, dynamic>>.from(response as List);
+  }
+
+  Future<bool> _confirmAllowanceExceedance(
+    List<Map<String, dynamic>> exceededAllowances,
+  ) async {
+    _allowanceJustificationController.clear();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final justification = _allowanceJustificationController.text.trim();
+
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.deepOrange),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('Fuel Allowance Exceeded')),
+                ],
+              ),
+              content: SizedBox(
+                width: 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Your requested fuel exceeds your allocated allowance. '
+                        'You may still submit this request for MERA approval, '
+                        'but you must explain why additional fuel is required.',
+                      ),
+                      const SizedBox(height: 16),
+                      for (final allowance in exceededAllowances) ...[
+                        Text(
+                          '${allowance['product']} - '
+                          '${allowance['allowance_type']}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('Allowance: ${allowance['limit_litres']} L'),
+                        Text('Already used: ${allowance['used_litres']} L'),
+                        Text('Remaining: ${allowance['remaining_litres']} L'),
+                        Text('Requested: ${allowance['requested_litres']} L'),
+                        Text(
+                          'Excess: ${allowance['excess_litres']} L',
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Divider(height: 24),
+                      ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _allowanceJustificationController,
+                        maxLines: 4,
+                        maxLength: 1000,
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Justification for Exceeding Allowance',
+                          hintText: 'Explain why you need additional fuel',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (justification.length < 10)
+                        const Text(
+                          'A justification of at least 10 characters is required.',
+                          style: TextStyle(color: Colors.deepOrange),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: justification.length < 10
+                      ? null
+                      : () => Navigator.pop(dialogContext, true),
+                  child: const Text('Continue to MERA Approval'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
   Future<void> _submitRequest() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -193,6 +302,50 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
     setState(() => _submitting = true);
 
+    try {
+      final allowancePreview = await _previewAllowances(items);
+
+      for (final allowance in allowancePreview) {
+        debugPrint(
+          'ALLOWANCE PREVIEW: '
+          '${allowance['product']} '
+          'type=${allowance['allowance_type']} '
+          'limit=${allowance['limit_litres']} '
+          'used=${allowance['used_litres']} '
+          'remaining=${allowance['remaining_litres']} '
+          'requested=${allowance['requested_litres']} '
+          'excess=${allowance['excess_litres']} '
+          'exceeded=${allowance['exceeded']}',
+        );
+      }
+      final exceededAllowances = allowancePreview
+          .where((allowance) => allowance['exceeded'] == true)
+          .toList();
+
+      if (exceededAllowances.isNotEmpty) {
+        if (!mounted) return;
+
+        final confirmed = await _confirmAllowanceExceedance(exceededAllowances);
+
+        if (!confirmed) {
+          if (mounted) {
+            setState(() => _submitting = false);
+          }
+          return;
+        }
+      } else {
+        _allowanceJustificationController.clear();
+      }
+    } catch (error) {
+      if (mounted) {
+        _showMessage('Allowance check failed: $error');
+        setState(() => _submitting = false);
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
     final session = _supabase.auth.currentSession;
     final user = _supabase.auth.currentUser;
 
@@ -210,6 +363,8 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
           'p_station_id': _stationId,
           'p_reason': _reasonController.text.trim(),
           'p_items': items,
+          'p_allowance_justification': _allowanceJustificationController.text
+              .trim(),
         },
       );
 
@@ -251,6 +406,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       _reasonController.clear();
       _petrolController.clear();
       _dieselController.clear();
+      _allowanceJustificationController.clear();
 
       setState(() {
         _districtId = null;

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -396,6 +396,7 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _eligibleStations = [];
   List<Map<String, dynamic>> _documents = [];
+  Map<String, dynamic>? _allowanceReview;
   final Set<String> _openedDocumentIds = {};
   String? _openingDocumentId;
   bool _loading = true;
@@ -435,6 +436,10 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
           'get_fuel_request_stations',
           params: {'p_district_id': districtId},
         ),
+        _client.rpc(
+          'get_fuel_request_allowance_review',
+          params: {'p_request_id': id},
+        ),
       ]);
       if (!mounted) return;
       final items = (results[0] as List)
@@ -446,6 +451,14 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
       final stations = (results[2] as List)
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
+      final allowanceRows = (results[3] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+      final allowanceReview = allowanceRows.isEmpty
+          ? null
+          : allowanceRows.first;
+
       for (final item in items) {
         final itemId = item['id'].toString();
         _litres[itemId] = TextEditingController(
@@ -468,6 +481,7 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
         _items = items;
         _documents = documents;
         _eligibleStations = stations;
+        _allowanceReview = allowanceReview;
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -475,14 +489,6 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  bool get _allDocumentsOpened =>
-      _documents.isNotEmpty &&
-      _documents.every(
-        (d) => _openedDocumentIds.contains(d['id'].toString()),
-      ) &&
-      _documents.any((d) => d['document_type'] == 'IDENTIFICATION') &&
-      _documents.any((d) => d['document_type'] == 'PROOF_OF_NEED');
 
   Future<void> _openDocument(Map<String, dynamic> document) async {
     if (_openingDocumentId != null) return;
@@ -517,7 +523,7 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
   }
 
   Future<void> _approve() async {
-    if (_saving || !_allDocumentsOpened || !_documentsVerified) return;
+    if (_saving || !_documentsVerified) return;
     final approvals = <Map<String, dynamic>>[];
     for (final item in _items) {
       final id = item['id'].toString();
@@ -762,6 +768,89 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
                           ],
                         ),
                       ),
+                      if (_allowanceReview != null &&
+                          _allowanceReview!['allowance_exceedance_snapshot']
+                              is List &&
+                          (_allowanceReview!['allowance_exceedance_snapshot']
+                                  as List)
+                              .any(
+                                (row) => row is Map && row['exceeded'] == true,
+                              ))
+                        _RequestSection(
+                          title:
+                              'Fuel allowance exceeded - MERA review required',
+                          icon: Icons.warning_amber_rounded,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'This customer requested fuel above their '
+                                'allocated allowance. Review the figures and '
+                                'justification before making a decision.',
+                                style: TextStyle(
+                                  color: Colors.deepOrange,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              for (final row
+                                  in (_allowanceReview!['allowance_exceedance_snapshot']
+                                      as List))
+                                if (row is Map)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${row['product']} - '
+                                          '${row['allowance_type']}'
+                                          '${row['exceeded'] == true ? ' (EXCEEDED)' : ''}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Allowance: ${row['limit_litres']} L',
+                                        ),
+                                        Text(
+                                          'Already used: ${row['used_litres']} L',
+                                        ),
+                                        Text(
+                                          'Remaining: ${row['remaining_litres']} L',
+                                        ),
+                                        Text(
+                                          'Requested: ${row['requested_litres']} L',
+                                        ),
+                                        Text(
+                                          'Excess: ${row['excess_litres']} L',
+                                          style: TextStyle(
+                                            color: row['exceeded'] == true
+                                                ? Colors.red
+                                                : Colors.black87,
+                                            fontWeight: row['exceeded'] == true
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              const Divider(),
+                              const Text(
+                                'Customer justification for exceeding allowance',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              SelectableText(
+                                (_allowanceReview!['allowance_exceedance_justification'] ??
+                                        'No justification recorded.')
+                                    .toString(),
+                              ),
+                            ],
+                          ),
+                        ),
                       _RequestSection(
                         title: 'Fuel products and allocations',
                         icon: Icons.local_gas_station_outlined,
@@ -853,7 +942,7 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
                           children: [
                             if (_documents.isEmpty)
                               const Text(
-                                'No supporting documents available. Approval is blocked.',
+                                'No supporting documents attached to this request.',
                               ),
                             for (final document in _documents)
                               ListTile(
@@ -889,15 +978,6 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
                                     ? () => _openDocument(document)
                                     : null,
                               ),
-                            if (canApprove && !_allDocumentsOpened)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 8),
-                                child: Text(
-                                  'Open every uploaded document before confirming '
-                                  'verification. Identification and proof of need are required.',
-                                  style: TextStyle(color: Colors.deepOrange),
-                                ),
-                              ),
                           ],
                         ),
                       ),
@@ -920,12 +1000,9 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
                               CheckboxListTile(
                                 contentPadding: EdgeInsets.zero,
                                 value: _documentsVerified,
-                                onChanged: _allDocumentsOpened
-                                    ? (value) => setState(
-                                        () =>
-                                            _documentsVerified = value ?? false,
-                                      )
-                                    : null,
+                                onChanged: (value) => setState(
+                                  () => _documentsVerified = value ?? false,
+                                ),
                                 title: const Text(
                                   'I have independently verified the supporting documents',
                                 ),
@@ -945,7 +1022,6 @@ class _RequestReviewDetailsState extends State<_RequestReviewDetails> {
                                     onPressed:
                                         _saving ||
                                             !_documentsVerified ||
-                                            !_allDocumentsOpened ||
                                             _eligibleStations.isEmpty ||
                                             _items.isEmpty
                                         ? null
