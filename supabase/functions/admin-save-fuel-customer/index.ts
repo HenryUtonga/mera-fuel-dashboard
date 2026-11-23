@@ -142,6 +142,43 @@ serve(async (req) => {
     const allowances = payload.allowances;
     const existingId = requiredText(payload.id);
 
+        // Authentication method for newly registered customers.
+    // Existing customers retain their current authentication identity.
+    const registrationMethod =
+      requiredText(payload.registration_method) || "INVITATION";
+
+    const initialPassword =
+      typeof payload.initial_password === "string"
+        ? payload.initial_password
+        : "";
+
+    if (!existingId) {
+      if (!["INVITATION", "PASSWORD"].includes(registrationMethod)) {
+        return respond(400, {
+          error: "Invalid customer registration method.",
+        });
+      }
+
+      if (registrationMethod === "PASSWORD") {
+        if (
+          initialPassword.length < 12 ||
+          initialPassword.length > 128
+        ) {
+          return respond(400, {
+            error: "Initial password must contain 12 to 128 characters.",
+          });
+        }
+      } else if (initialPassword.length > 0) {
+        return respond(400, {
+          error: "Initial password is only allowed for password registration.",
+        });
+      }
+    } else if (initialPassword.length > 0) {
+      return respond(400, {
+        error: "Use the separate password reset operation for existing customers.",
+      });
+    }
+
     if (!applicantName || !phone) {
       return respond(400, {
         error: "Customer name and phone number are required.",
@@ -260,18 +297,38 @@ serve(async (req) => {
         });
       }
 
-      // Supabase sends the customer an account invitation.
-      const { data: invitation, error: inviteError } =
-        await adminClient.auth.admin.inviteUserByEmail(email);
+      if (registrationMethod === "PASSWORD") {
+        // Create a customer Auth account with an administrator-set password.
+        const { data: created, error: createError } =
+          await adminClient.auth.admin.createUser({
+            email,
+            password: initialPassword,
+            email_confirm: true,
+          });
 
-      if (inviteError || !invitation.user) {
-        return respond(400, {
-          error: inviteError?.message ??
-            "Unable to create customer invitation.",
-        });
+        if (createError || !created.user) {
+          return respond(400, {
+            error: createError?.message ??
+              "Unable to create customer login account.",
+          });
+        }
+
+        createdAuthUserId = created.user.id;
+      } else {
+        // Preserve the existing email invitation registration process.
+        const { data: invitation, error: inviteError } =
+          await adminClient.auth.admin.inviteUserByEmail(email);
+
+        if (inviteError || !invitation.user) {
+          return respond(400, {
+            error: inviteError?.message ??
+              "Unable to create customer invitation.",
+          });
+        }
+
+        createdAuthUserId = invitation.user.id;
       }
 
-      createdAuthUserId = invitation.user.id;
       customerPayload.auth_user_id = createdAuthUserId;
     }
 
@@ -311,10 +368,13 @@ serve(async (req) => {
       success: true,
       customer_id: customerId,
       action: existingId ? "UPDATED" : "CREATED",
-      invitation_sent: !existingId,
+      registration_method: existingId ? null : registrationMethod,
+      invitation_sent: !existingId && registrationMethod === "INVITATION",
       message: existingId
         ? "Customer updated successfully."
-        : "Customer created and invitation initiated.",
+        : registrationMethod === "PASSWORD"
+          ? "Customer created successfully with login credentials."
+          : "Customer created and invitation initiated.",
     });
   } catch (error) {
     console.error("Customer administration error:", error);

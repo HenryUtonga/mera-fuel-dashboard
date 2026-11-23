@@ -436,3 +436,8 @@ entrypoint = "./functions/process-fuel-request-emails/index.ts"
 # static_files = [ "./functions/process-fuel-request-emails/*.html" ]
 [functions.confirm-fuel-station-dispensing]
 verify_jwt = false
+[functions.admin-save-fuel-customer]
+verify_jwt = false
+
+[functions.admin-reset-fuel-customer-password]
+verify_jwt = false

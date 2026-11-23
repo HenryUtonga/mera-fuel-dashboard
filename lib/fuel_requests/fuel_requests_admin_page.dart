@@ -347,9 +347,20 @@ class _CustomerEditorState extends State<_CustomerEditor> {
   late final TextEditingController _registration;
   late DateTime _validFrom;
   late DateTime _expiresOn;
-  late String _category;
+    late String _category;
   late String _status;
   late bool _autoApprove;
+
+  // Customer login account settings.
+  String _registrationMethod = 'INVITATION';
+  final TextEditingController _initialPassword =
+      TextEditingController();
+  bool _showInitialPassword = false;
+  // Password reset for existing registered customers.
+  final TextEditingController _resetPassword =
+      TextEditingController();
+  bool _showResetPassword = false;
+  bool _resettingPassword = false;
   bool _saving = false;
   String? _error;
   late final Map<String, _ProductLimit> _limits;
@@ -389,12 +400,22 @@ class _CustomerEditorState extends State<_CustomerEditor> {
 
   @override
   void dispose() {
-    for (final c in [_name, _company, _email, _phone, _registration]) {
+    for (final c in [
+      _name,
+      _company,
+      _email,
+      _phone,
+      _registration,
+      _initialPassword,
+      _resetPassword,
+    ]) {
       c.dispose();
     }
+
     for (final l in _limits.values) {
       l.controller.dispose();
     }
+
     super.dispose();
   }
 
@@ -447,6 +468,87 @@ class _CustomerEditorState extends State<_CustomerEditor> {
     );
   }
 
+  Future<void> _resetCustomerPassword() async {
+    if (!_editing || _resettingPassword || _saving) return;
+
+    final customerId = widget.customer?['id']?.toString();
+    final password = _resetPassword.text;
+
+    if (customerId == null || customerId.isEmpty) {
+      setState(() => _error = 'Customer ID is missing.');
+      return;
+    }
+
+    if (password.length < 12 || password.length > 128) {
+      setState(
+        () => _error = 'Password must contain 12 to 128 characters.',
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm Password Reset'),
+        content: const Text(
+          'Reset this customer’s login password? '
+          'The customer will need the new password to sign in.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Reset Password'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _resettingPassword = true;
+      _error = null;
+    });
+
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'admin-reset-fuel-customer-password',
+        body: {
+          'customer_id': customerId,
+          'new_password': password,
+        },
+      );
+
+      if (response.status < 200 || response.status >= 300) {
+        throw Exception('Password reset failed: ${response.data}');
+      }
+
+      if (!mounted) return;
+
+      _resetPassword.clear();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Customer password reset successfully.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = 'Unable to reset customer password: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _resettingPassword = false);
+      }
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_expiresOn.isBefore(_validFrom)) {
@@ -491,6 +593,12 @@ class _CustomerEditorState extends State<_CustomerEditor> {
       'phone_number': _phone.text.trim(),
       'registration_number': _registration.text.trim(),
       'account_status': _status,
+
+      // Login credentials are configured only when creating a customer.
+      if (!_editing) 'registration_method': _registrationMethod,
+      if (!_editing && _registrationMethod == 'PASSWORD')
+        'initial_password': _initialPassword.text,
+
       'auto_approval_enabled': _autoApprove,
       'valid_from': _date(_validFrom),
       'expires_on': _date(_expiresOn),
@@ -582,6 +690,139 @@ class _CustomerEditorState extends State<_CustomerEditor> {
                         .toList(),
                     onChanged: (v) => setState(() => _status = v ?? _status),
                   ),
+
+                                    if (!_editing) ...[
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    const Text(
+                      'Account Security',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: _registrationMethod,
+                      decoration: const InputDecoration(
+                        labelText: 'Customer login setup',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'INVITATION',
+                          child: Text('Send Email Invitation'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'PASSWORD',
+                          child: Text('Set Initial Password'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _registrationMethod = value;
+                          if (value != 'PASSWORD') {
+                            _initialPassword.clear();
+                          }
+                        });
+                      },
+                    ),
+                    if (_registrationMethod == 'PASSWORD') ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _initialPassword,
+                        obscureText: !_showInitialPassword,
+                        decoration: InputDecoration(
+                          labelText: 'Initial Password',
+                          helperText: 'Minimum 12 characters',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _showInitialPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () => setState(
+                              () => _showInitialPassword =
+                                  !_showInitialPassword,
+                            ),
+                          ),
+                        ),
+                        validator: (value) {
+                          if (_registrationMethod != 'PASSWORD') {
+                            return null;
+                          }
+                          if (value == null ||
+                              value.length < 12 ||
+                              value.length > 128) {
+                            return 'Password must contain 12 to 128 characters';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Only use this option when the customer email '
+                        'address has been independently verified.',
+                      ),
+                    ],
+                  ],
+
+                  if (_editing) ...[
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    const Text(
+                      'Account Security',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _resetPassword,
+                      obscureText: !_showResetPassword,
+                      decoration: InputDecoration(
+                        labelText: 'New Login Password',
+                        helperText: '12 to 128 characters',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _showResetPassword
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                          onPressed: () => setState(
+                            () => _showResetPassword =
+                                !_showResetPassword,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: _resettingPassword || _saving
+                            ? null
+                            : _resetCustomerPassword,
+                        icon: const Icon(Icons.lock_reset),
+                        label: Text(
+                          _resettingPassword
+                              ? 'Resetting Password...'
+                              : 'Reset Password',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Resetting the password does not change '
+                      'the customer account status or fuel allowances.',
+                    ),
+                  ],
+
+
                   const SizedBox(height: 12),
                   Wrap(
                     spacing: 16,
